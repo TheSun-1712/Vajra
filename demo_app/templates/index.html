@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISRO Solar AO — VAJRA Real-Time Simulator Dashboard</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #080d1a;
+            --card-bg: rgba(15, 23, 42, 0.75);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-orange: #ff6f00;
+            --accent-cyan: #00f5ff;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --success: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            background-image: radial-gradient(circle at 10% 20%, rgba(15, 23, 42, 0.95) 0%, rgba(8, 12, 24, 1) 90%);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 24px;
+            backdrop-filter: blur(12px);
+            background: rgba(8, 13, 26, 0.85);
+            border-bottom: 1px solid var(--border-color);
+            flex-shrink: 0;
+        }
+
+        .logo-section h1 {
+            font-weight: 800;
+            font-size: 20px;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, #fff, var(--text-muted));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 0;
+        }
+
+        .logo-section span {
+            color: var(--accent-orange);
+            font-weight: 800;
+        }
+
+        .tagline {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--accent-cyan);
+            text-transform: uppercase;
+            margin-top: 1px;
+        }
+
+        .telescope-info {
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+        }
+
+        .info-pill {
+            background: var(--border-color);
+            padding: 4px 10px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            grid-gap: 16px;
+            padding: 16px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+        }
+
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow: hidden;
+        }
+
+        .panel {
+            backdrop-filter: blur(16px);
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel-title {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            border-left: 3px solid var(--accent-orange);
+            padding-left: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Control Panel Styles */
+        .control-group {
+            margin-bottom: 12px;
+        }
+
+        .control-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .control-val {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .select-input {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 8px;
+            border-radius: 8px;
+            outline: none;
+            font-family: 'Outfit', sans-serif;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-bottom: 8px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 13px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-orange), #ff9100);
+            color: white;
+            box-shadow: 0 4px 10px rgba(255, 111, 0, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(255, 111, 0, 0.5);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .mode-toggle {
+            display: flex;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 3px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 8px;
+            text-align: center;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .mode-btn.active {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--accent-cyan);
+            border: 1px solid rgba(0, 245, 255, 0.15);
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent-orange);
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            height: 4px;
+            outline: none;
+        }
+
+        /* Image Viewports Grid (Single row, 4 wide) */
+        .viewports-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-gap: 12px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        .viewport-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            overflow: hidden;
+        }
+
+        .viewport-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            text-align: center;
+        }
+
+        .viewport-image-wrapper {
+            flex-grow: 1;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background: #000;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .viewport-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        /* Metrics Box */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .metric-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 10px;
+            text-align: center;
+        }
+
+        .metric-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+
+        .metric-val.cyan { color: var(--accent-cyan); }
+        .metric-val.orange { color: var(--accent-orange); }
+
+        .metric-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        /* Chart container */
+        .chart-panel {
+            height: 180px;
+            flex-shrink: 0;
+        }
+
+        .chart-wrapper {
+            width: 100%;
+            height: calc(100% - 24px);
+            position: relative;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-section">
+            <h1>SUNSHINE-ISRO <span>VAJRA</span></h1>
+            <div class="tagline">Versatile Adaptive-optics Joint Real-time Actuation</div>
+        </div>
+        <div class="telescope-info">
+            <div class="info-pill">Telescope: NLST 2.0m</div>
+            <div class="info-pill">Site: IAO Hanle</div>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="panel">
+                <div class="panel-title">CONTROL CENTER</div>
+                
+                <div class="mode-toggle">
+                    <div class="mode-btn active" id="mode-vajra" onclick="setMode('vajra')">VAJRA AO</div>
+                    <div class="mode-btn" id="mode-classical" onclick="setMode('classical')">Classical SH</div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">Sensing Target</div>
+                    <select class="select-input" id="select-target" onchange="resetLoop()">
+                        <option value="solar">Solar Granulation (Extended)</option>
+                        <option value="point">Airy Point Star / LGS</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Fried Parameter (r0)</span>
+                        <span class="control-val" id="val-r0">8.0 cm</span>
+                    </div>
+                    <input type="range" id="slider-r0" min="4" max="15" step="0.5" value="8" oninput="updateParams()">
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Wind Velocity</span>
+                        <span class="control-val" id="val-wind">10.0 m/s</span>
+                    </div>
+                    <input type="range" id="slider-wind" min="2" max="30" step="1" value="10" oninput="updateParams()">
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-box">
+                        <div class="metric-val cyan" id="metric-rms">0.000</div>
+                        <div class="metric-label">Residual RMS</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-val orange" id="metric-strehl">1.000</div>
+                        <div class="metric-label">Strehl Ratio</div>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Seeing Regime</span>
+                        <span class="control-val" id="metric-regime">Steady</span>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" id="btn-play" onclick="togglePlay()">Start Loop</button>
+                <button class="btn btn-secondary" onclick="resetLoop()">Reset Optics</button>
+            </div>
+        </div>
+
+        <!-- Main Panel -->
+        <div class="main-panel">
+            <!-- Viewports grid -->
+            <div class="panel" style="flex-grow: 1; overflow: hidden;">
+                <div class="panel-title">LIVE OPTICAL VIEWPORTS</div>
+                <div class="viewports-grid">
+                    <div class="viewport-card">
+                        <div class="viewport-label">Atmosphere Phase Screen</div>
+                        <div class="viewport-image-wrapper">
+                            <img id="img-atm" class="viewport-image" src="" alt="Atmosphere Phase">
+                        </div>
+                    </div>
+                    <div class="viewport-card">
+                        <div class="viewport-label">Residual Pupil Phase</div>
+                        <div class="viewport-image-wrapper">
+                            <img id="img-res" class="viewport-image" src="" alt="Residual Phase">
+                        </div>
+                    </div>
+                    <div class="viewport-card">
+                        <div class="viewport-label">WFS Camera Frame</div>
+                        <div class="viewport-image-wrapper">
+                            <img id="img-wfs" class="viewport-image" src="" alt="WFS spots">
+                        </div>
+                    </div>
+                    <div class="viewport-card">
+                        <div class="viewport-label">DM Actuator Map</div>
+                        <div class="viewport-image-wrapper">
+                            <img id="img-dm" class="viewport-image" src="" alt="DM Command Map">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rolling Performance Chart -->
+            <div class="panel chart-panel">
+                <div class="panel-title">LOOP PERFORMANCE HISTORY</div>
+                <div class="chart-wrapper">
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isPlaying = false;
+        let mode = 'vajra';
+        let r0 = 0.08;
+        let windSpeed = 10.0;
+        let chart = null;
+
+        // Initialize Chart
+        function initChart() {
+            const ctx = document.getElementById('performanceChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 100}, (_, i) => i),
+                    datasets: [
+                        {
+                            label: 'Residual RMS (rad)',
+                            borderColor: '#00f5ff',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            data: Array(100).fill(null),
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Strehl Ratio',
+                            borderColor: '#ff6f00',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            data: Array(100).fill(null),
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: false },
+                            ticks: { color: '#9ca3af', font: { size: 9 } },
+                            grid: { color: 'rgba(255, 255, 255, 0.04)' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            min: 0,
+                            max: 1.05,
+                            title: { display: false },
+                            ticks: { color: '#9ca3af', font: { size: 9 } },
+                            grid: { drawOnChartArea: false }
+                        }
+                    },
+                    plugins: {
+                        legend: { 
+                            position: 'top',
+                            labels: { color: '#f3f4f6', boxWidth: 12, font: { size: 10 } } 
+                        }
+                    }
+                }
+            });
+        }
+
+        function setMode(newMode) {
+            mode = newMode;
+            document.getElementById('mode-vajra').classList.toggle('active', mode === 'vajra');
+            document.getElementById('mode-classical').classList.toggle('active', mode === 'classical');
+            resetLoop();
+        }
+
+        function updateParams() {
+            r0 = parseFloat(document.getElementById('slider-r0').value) / 100.0;
+            windSpeed = parseFloat(document.getElementById('slider-wind').value);
+            
+            document.getElementById('val-r0').innerText = (r0 * 100.0).toFixed(1) + ' cm';
+            document.getElementById('val-wind').innerText = windSpeed.toFixed(1) + ' m/s';
+        }
+
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            document.getElementById('btn-play').innerText = isPlaying ? 'Pause Loop' : 'Start Loop';
+            document.getElementById('btn-play').style.background = isPlaying ? 'linear-gradient(135deg, #ef4444, #b91c1c)' : '';
+            document.getElementById('btn-play').style.boxShadow = isPlaying ? '0 4px 10px rgba(239, 68, 68, 0.3)' : '';
+            if (isPlaying) {
+                runLoopStep();
+            }
+        }
+
+        async function resetLoop() {
+            updateParams();
+            const targetMode = document.getElementById('select-target').value;
+            const res = await fetch('/api/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode, r0, wind_speed: windSpeed, target_mode: targetMode })
+            });
+            const data = await res.json();
+            
+            // Clear chart
+            chart.data.datasets[0].data = Array(100).fill(null);
+            chart.data.datasets[1].data = Array(100).fill(null);
+            chart.update();
+            
+            // Single step to populate initial frame
+            if (!isPlaying) {
+                runLoopStep(true);
+            }
+        }
+
+        async function runLoopStep(singleOnly = false) {
+            if (!isPlaying && !singleOnly) return;
+            
+            try {
+                const res = await fetch('/api/run_step', { method: 'POST' });
+                const data = await res.json();
+                
+                // Update UI elements
+                document.getElementById('metric-rms').innerText = data.rms.toFixed(3);
+                document.getElementById('metric-strehl').innerText = data.strehl.toFixed(3);
+                document.getElementById('metric-regime').innerText = data.regime;
+                
+                document.getElementById('img-atm').src = data.atm_img;
+                document.getElementById('img-res').src = data.res_img;
+                document.getElementById('img-wfs').src = data.wfs_img;
+                document.getElementById('img-dm').src = data.dm_img;
+                
+                // Update rolling charts
+                chart.data.datasets[0].data = data.rms_history.concat(Array(100 - data.rms_history.length).fill(null));
+                chart.data.datasets[1].data = data.strehl_history.concat(Array(100 - data.strehl_history.length).fill(null));
+                chart.update();
+            } catch (err) {
+                console.error("Step execution failed:", err);
+            }
+            
+            if (isPlaying && !singleOnly) {
+                requestAnimationFrame(() => runLoopStep());
+            }
+        }
+
+        // Initialize everything on load
+        window.onload = () => {
+            initChart();
+            resetLoop();
+        };
+    </script>
+</body>
+</html>
