@@ -132,7 +132,12 @@ def to_colormap_base64(arr, cmap_name='inferno', mask_2d=None):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    from flask import make_response
+    resp = make_response(render_template('index.html'))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 @app.route('/api/reset', methods=['POST'])
 def reset_loop():
@@ -229,31 +234,77 @@ def run_step():
             idx = np.argmax(loop_state.regime_predictor.probabilities)
             regime = ["Steady", "Transitioning", "Broken"][idx]
             
-        # Build the 3D wavefront grid from the ATMOSPHERIC phase (atm_2d).
-        # This always shows a beautiful smooth Kolmogorov turbulence surface —
-        # exactly what the reference image shows as "Reconstructed Wavefront".
-        # Downsample 256x256 → 32x32, mean-subtract inside pupil so the surface
-        # is centred at 0 (hills and valleys), and encode outside-pupil pixels
-        # as Python None so JSON serialises them as null (frontend skips them).
-        atm_ds = atm_2d[::8, ::8]           # (32, 32)
-        pupil_ds = pupil_2d[::8, ::8]        # (32, 32) binary mask
+        # ── Grid 1: Atmosphere HO wavefront (tip-tilt removed) ─────────────────
+        # Used by the "3D Reconstructed Wavefront (HO)" panel.
+        atm_ds   = atm_2d[::8, ::8]      # (32, 32)
+        pupil_ds = pupil_2d[::8, ::8]    # (32, 32) binary mask
         
-        pupil_vals = atm_ds[pupil_ds > 0]
+        rows_ds, cols_ds = atm_ds.shape
+        yy_ds, xx_ds = np.mgrid[0:rows_ds, 0:cols_ds]
+        
+        pupil_flat = (pupil_ds > 0).flatten()
+        if pupil_flat.sum() > 6:
+            A_fit = np.column_stack([
+                xx_ds.flatten()[pupil_flat],
+                yy_ds.flatten()[pupil_flat],
+                np.ones(pupil_flat.sum())
+            ])
+            b_fit = atm_ds.flatten()[pupil_flat]
+            coeffs, _, _, _ = np.linalg.lstsq(A_fit, b_fit, rcond=None)
+            plane = coeffs[0] * xx_ds + coeffs[1] * yy_ds + coeffs[2]
+            atm_ho = atm_ds - plane
+        else:
+            atm_ho = atm_ds
+
+        pupil_vals = atm_ho[pupil_ds > 0]
         if len(pupil_vals) > 0:
             atm_mean = float(pupil_vals.mean())
             atm_std  = float(pupil_vals.std()) if float(pupil_vals.std()) > 1e-9 else 1.0
         else:
             atm_mean, atm_std = 0.0, 1.0
-        
-        # Normalise to roughly ±1.5 range so height scaling is consistent
-        atm_norm = (atm_ds - atm_mean) / atm_std
-        
+        atm_norm = (atm_ho - atm_mean) / atm_std
+
         atm_grid = [
-            [
-                round(float(atm_norm[r, c]), 4) if pupil_ds[r, c] > 0 else None
-                for c in range(atm_ds.shape[1])
-            ]
-            for r in range(atm_ds.shape[0])
+            [round(float(atm_norm[r, c]), 4) if pupil_ds[r, c] > 0 else None
+             for c in range(cols_ds)]
+            for r in range(rows_ds)
+        ]
+
+        # ── Grid 2: Full atmosphere phase (no tip-tilt removal) ────────────────
+        # Used by the "Atmosphere Phase Screen" 3D panel.
+        # Shows the raw Kolmogorov turbulence including tip-tilt.
+        pupil_vals_full = atm_ds[pupil_ds > 0]
+        if len(pupil_vals_full) > 0:
+            af_mean = float(pupil_vals_full.mean())
+            af_std  = float(pupil_vals_full.std()) if float(pupil_vals_full.std()) > 1e-9 else 1.0
+        else:
+            af_mean, af_std = 0.0, 1.0
+        atm_full_norm = (atm_ds - af_mean) / af_std
+
+        atm_full_grid = [
+            [round(float(atm_full_norm[r, c]), 4) if pupil_ds[r, c] > 0 else None
+             for c in range(cols_ds)]
+            for r in range(rows_ds)
+        ]
+
+        # ── Grid 3: DM actuator command surface ────────────────────────────────
+        # Used by the "DM Actuator Map" 3D panel.
+        # The DM surface shape IS a physical 3D mirror deformation.
+        dm_vals = loop_state.applied_commands  # shape (N_act,) flat
+        dm_g = dm_grid.copy().astype(float)   # (18, 18)
+        dm_valid = dm_mask.copy()              # (18, 18) boolean
+        dm_active = dm_g[dm_valid]
+        if len(dm_active) > 0:
+            dm_mean = float(dm_active.mean())
+            dm_std  = float(dm_active.std()) if float(dm_active.std()) > 1e-9 else 1.0
+        else:
+            dm_mean, dm_std = 0.0, 1.0
+        dm_norm = (dm_g - dm_mean) / dm_std
+
+        dm_grid_3d = [
+            [round(float(dm_norm[r, c]), 4) if dm_mask[r, c] else None
+             for c in range(18)]
+            for r in range(18)
         ]
             
         return jsonify({
@@ -266,7 +317,9 @@ def run_step():
             "dm_img": dm_img,
             "rms_history": loop_state.rms_history,
             "strehl_history": loop_state.strehl_history,
-            "res_grid": atm_grid
+            "res_grid":      atm_grid,       # HO wavefront (tip-tilt removed)
+            "atm_full_grid": atm_full_grid,  # Raw atmosphere phase
+            "dm_grid_3d":    dm_grid_3d      # DM mirror surface shape
         })
 
 if __name__ == '__main__':

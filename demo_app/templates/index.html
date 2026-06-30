@@ -407,11 +407,11 @@
                     <div class="viewport-card">
                         <div class="viewport-label">Atmosphere Phase Screen</div>
                         <div class="viewport-image-wrapper">
-                            <img id="img-atm" class="viewport-image" src="" alt="Atmosphere Phase">
+                            <canvas id="canvas-atm" style="width: 100%; height: 100%; display: block;"></canvas>
                         </div>
                     </div>
                     <div class="viewport-card">
-                        <div class="viewport-label">3D Reconstructed Wavefront</div>
+                        <div class="viewport-label">3D Reconstructed Wavefront (HO)</div>
                         <div class="viewport-image-wrapper">
                             <canvas id="canvas-3d" style="width: 100%; height: 100%; display: block;"></canvas>
                         </div>
@@ -425,7 +425,7 @@
                     <div class="viewport-card">
                         <div class="viewport-label">DM Actuator Map</div>
                         <div class="viewport-image-wrapper">
-                            <img id="img-dm" class="viewport-image" src="" alt="DM Command Map">
+                            <canvas id="canvas-dm" style="width: 100%; height: 100%; display: block;"></canvas>
                         </div>
                     </div>
                 </div>
@@ -554,141 +554,224 @@
             }
         }
 
-        let canvas3D = null;
-        let ctx3D = null;
-        let rotAngle = 0;
-        let lastGrid = null;
+        // ══════════════════════════════════════════════════════════════════════
+        // Generic 3D surface renderer factory
+        // Creates a self-contained renderer for any canvas element.
+        // Options:
+        //   theta      – azimuth angle (radians)
+        //   phi        – elevation angle (radians)
+        //   zLabel     – label for the Z axis
+        //   colormap   – 'jet' (blue→red) or 'coolwarm' or 'copper'
+        // ══════════════════════════════════════════════════════════════════════
+        function make3DSurface(canvasId, options) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return null;
+            const ctx    = canvas.getContext('2d');
+            const theta  = options.theta  ?? (210 * Math.PI / 180);
+            const phi    = options.phi    ?? 0.48;
+            const zLabel = options.zLabel ?? 'φ (σ)';
+            const cmap   = options.colormap ?? 'jet';
 
-        function init3D() {
-            canvas3D = document.getElementById('canvas-3d');
-            ctx3D = canvas3D.getContext('2d');
-            resize3D();
-            window.addEventListener('resize', resize3D);
-            (function loop() { renderFrame(); requestAnimationFrame(loop); })();
-        }
-
-        function resize3D() {
-            if (!canvas3D) return;
-            const p = canvas3D.parentNode.getBoundingClientRect();
-            canvas3D.width  = p.width  || 200;
-            canvas3D.height = p.height || 200;
-        }
-
-        function renderFrame() {
-            if (!ctx3D || !canvas3D || !lastGrid) return;
-            rotAngle += 0.008;
-            draw3DSurface(lastGrid, rotAngle);
-        }
-
-        function draw3DSurface(grid, angle) {
-            const W = canvas3D.width;
-            const H = canvas3D.height;
-            ctx3D.clearRect(0, 0, W, H);
-
-            const ROWS = grid.length;
-            const COLS = grid[0].length;
-
-            // ── Camera parameters ────────────────────────────────────────────
-            // theta: rotation around Z (spin), phi: elevation tilt
-            const theta = angle;
-            const phi   = 0.55;   // ~31° tilt from horizontal — matches reference image
-
-            const sinT = Math.sin(theta), cosT = Math.cos(theta);
-            const sinP = Math.sin(phi),   cosP = Math.cos(phi);
-
-            // ── Height scaling ────────────────────────────────────────────────
-            // Data from backend is z-scored (mean-subtracted, std-normalised) so
-            // values are centred at 0.  Clamp to ±2.5σ for visual clarity.
-            const Z_SCALE = 0.20;   // fraction of view-box size for full ±1σ height
-            const Z_CLAMP = 2.5;
-
-            // ── Projection helper ─────────────────────────────────────────────
-            // Maps (col, row, z) in data space → (px, py) in screen space.
-            // Oblique parallel projection: X→right, Y→depth, Z→up.
-            const cx = W * 0.50;
-            const cy = H * 0.62;   // shift centre down so mesh fills frame nicely
-            const SCALE = Math.min(W, H) * 0.78;
-
-            function proj(c, r, z) {
-                // Normalised data coords in [-0.5, +0.5]
-                const dx =  (c / (COLS - 1)) - 0.5;
-                const dy =  (r / (ROWS - 1)) - 0.5;
-                const dz =  Math.max(-Z_CLAMP, Math.min(Z_CLAMP, z)) * Z_SCALE;
-
-                // Rotate around vertical (Z) axis
-                const rx =  dx * cosT - dy * sinT;
-                const ry =  dx * sinT + dy * cosT;
-
-                // Project onto screen (oblique: tilt around X axis)
-                const sx = rx;
-                const sy = ry * cosP - dz * sinP;
-                // Depth for Painter's sort (larger = further back)
-                const depth = ry * sinP + dz * cosP;
-
-                return { x: cx + sx * SCALE, y: cy + sy * SCALE, depth };
+            function resize() {
+                const p = canvas.parentNode.getBoundingClientRect();
+                canvas.width  = p.width  || 200;
+                canvas.height = p.height || 200;
             }
+            resize();
+            window.addEventListener('resize', resize);
 
-            // ── Project all vertices ──────────────────────────────────────────
-            const verts = [];
-            for (let r = 0; r < ROWS; r++) {
-                verts[r] = [];
-                for (let c = 0; c < COLS; c++) {
-                    const z = grid[r][c];          // null = outside pupil
-                    const active = z !== null && z !== undefined && isFinite(z);
-                    verts[r][c] = active ? { ...proj(c, r, z), z, active: true }
-                                         : { x: 0, y: 0, depth: 0, z: 0, active: false };
-                }
-            }
-
-            // ── Collect renderable quad cells ─────────────────────────────────
-            // A cell is renderable only if ALL four corners are inside the pupil.
-            const cells = [];
-            for (let r = 0; r < ROWS - 1; r++) {
-                for (let c = 0; c < COLS - 1; c++) {
-                    const v00 = verts[r][c];
-                    const v01 = verts[r][c + 1];
-                    const v11 = verts[r + 1][c + 1];
-                    const v10 = verts[r + 1][c];
-                    if (!v00.active || !v01.active || !v11.active || !v10.active) continue;
-
-                    const avgZ     = (v00.z + v01.z + v11.z + v10.z) / 4;
-                    const avgDepth = (v00.depth + v01.depth + v11.depth + v10.depth) / 4;
-                    cells.push({ v00, v01, v11, v10, avgZ, avgDepth });
-                }
-            }
-
-            // Sort back-to-front (Painter's Algorithm)
-            cells.sort((a, b) => b.avgDepth - a.avgDepth);
-
-            // ── Colour map: Blue→Cyan→Green→Yellow→Red ───────────────────────
-            // Input z is z-scored; map [-Z_CLAMP, +Z_CLAMP] → [0, 1]
-            function zColor(z) {
-                let t = (z + Z_CLAMP) / (2 * Z_CLAMP);
+            // ── Colour maps ─────────────────────────────────────────────
+            function jetColor(t) {
                 t = Math.max(0, Math.min(1, t));
                 let r, g, b;
-                if (t < 0.25)      { const f = t / 0.25;       r = 0;              g = Math.round(f * 255);        b = 255; }
-                else if (t < 0.50) { const f = (t-0.25)/0.25;  r = 0;              g = 255;                        b = Math.round((1-f)*255); }
-                else if (t < 0.75) { const f = (t-0.50)/0.25;  r = Math.round(f*255); g = 255;                    b = 0; }
-                else               { const f = (t-0.75)/0.25;  r = 255;            g = Math.round((1-f)*255);      b = 0; }
+                if      (t < 0.25) { const f=t/0.25;       r=0;             g=Math.round(f*255);      b=255; }
+                else if (t < 0.50) { const f=(t-0.25)/0.25; r=0;            g=255;                    b=Math.round((1-f)*255); }
+                else if (t < 0.75) { const f=(t-0.50)/0.25; r=Math.round(f*255); g=255;              b=0; }
+                else               { const f=(t-0.75)/0.25; r=255;          g=Math.round((1-f)*255);  b=0; }
                 return `rgb(${r},${g},${b})`;
             }
+            function copperColor(t) {
+                // Copper tone: dark brown → bright gold/orange
+                t = Math.max(0, Math.min(1, t));
+                const r = Math.round(Math.min(255, t * 320));
+                const g = Math.round(t * 160);
+                const b = Math.round(t * 80);
+                return `rgb(${r},${g},${b})`;
+            }
+            function coolwarmColor(t) {
+                t = Math.max(0, Math.min(1, t));
+                let r, g, b;
+                if (t < 0.5) {
+                    const f = t / 0.5;
+                    r=Math.round((1-f)*59 + f*220); g=Math.round((1-f)*76+f*220); b=255;
+                } else {
+                    const f = (t-0.5)/0.5;
+                    r=255; g=Math.round((1-f)*220+f*59); b=Math.round((1-f)*220+f*76);
+                }
+                return `rgb(${r},${g},${b})`;
+            }
+            function getColor(z, Z_CLAMP) {
+                const t = (z + Z_CLAMP) / (2 * Z_CLAMP);
+                if (cmap === 'copper')   return copperColor(t);
+                if (cmap === 'coolwarm') return coolwarmColor(t);
+                return jetColor(t);
+            }
+            function getGradStops() {
+                if (cmap === 'copper') return [
+                    [0.00,'rgb(0,0,0)'],[0.33,'rgb(80,40,0)'],
+                    [0.67,'rgb(180,90,30)'],[1.00,'rgb(255,200,120)']
+                ];
+                if (cmap === 'coolwarm') return [
+                    [0.00,'rgb(59,76,255)'],[0.50,'rgb(220,220,220)'],[1.00,'rgb(255,59,76)']
+                ];
+                return [
+                    [0.00,'rgb(0,0,255)'],[0.25,'rgb(0,255,255)'],
+                    [0.50,'rgb(0,255,0)'],[0.75,'rgb(255,255,0)'],[1.00,'rgb(255,0,0)']
+                ];
+            }
 
-            // ── Render ────────────────────────────────────────────────────────
-            cells.forEach(({ v00, v01, v11, v10, avgZ }) => {
-                ctx3D.beginPath();
-                ctx3D.moveTo(v00.x, v00.y);
-                ctx3D.lineTo(v01.x, v01.y);
-                ctx3D.lineTo(v11.x, v11.y);
-                ctx3D.lineTo(v10.x, v10.y);
-                ctx3D.closePath();
-                ctx3D.fillStyle   = zColor(avgZ);
-                ctx3D.fill();
-                // Thin dark wireframe so individual quads are visible
-                ctx3D.strokeStyle = 'rgba(0,0,0,0.25)';
-                ctx3D.lineWidth   = 0.4;
-                ctx3D.stroke();
+            // ── Core draw ───────────────────────────────────────────────
+            function draw(grid) {
+                if (!grid) return;
+                const W = canvas.width, H = canvas.height;
+                ctx.clearRect(0, 0, W, H);
+
+                const ROWS = grid.length, COLS = grid[0].length;
+                const sinT = Math.sin(theta), cosT = Math.cos(theta);
+                const sinP = Math.sin(phi),   cosP = Math.cos(phi);
+                const Z_SCALE = 0.28, Z_CLAMP = 2.5;
+                const cx = W * 0.50, cy = H * 0.58;
+                const SCALE = Math.min(W, H) * 0.76;
+
+                function proj(dx, dy, dz) {
+                    const rx = dx*cosT - dy*sinT;
+                    const ry = dx*sinT + dy*cosT;
+                    const cz = Math.max(-Z_CLAMP, Math.min(Z_CLAMP, dz)) * Z_SCALE;
+                    return {
+                        x:     cx + rx * SCALE,
+                        y:     cy + (ry*cosP - cz*sinP) * SCALE,
+                        depth: ry*sinP + cz*cosP
+                    };
+                }
+                function gp(c, r, z) {
+                    return proj((c/(COLS-1))-0.5, (r/(ROWS-1))-0.5, z);
+                }
+
+                // Project vertices
+                const verts = [];
+                for (let r=0; r<ROWS; r++) {
+                    verts[r]=[];
+                    for (let c=0; c<COLS; c++) {
+                        const z=grid[r][c];
+                        const ok = z!==null && z!==undefined && isFinite(z);
+                        verts[r][c] = ok ? {...gp(c,r,z), z, ok:true}
+                                        : {x:0,y:0,depth:0,z:0,ok:false};
+                    }
+                }
+
+                // Build cells
+                const cells=[];
+                for (let r=0; r<ROWS-1; r++) {
+                    for (let c=0; c<COLS-1; c++) {
+                        const a=verts[r][c], b=verts[r][c+1],
+                              d=verts[r+1][c+1], e=verts[r+1][c];
+                        if (!a.ok||!b.ok||!d.ok||!e.ok) continue;
+                        const avgZ=(a.z+b.z+d.z+e.z)/4;
+                        const avgD=(a.depth+b.depth+d.depth+e.depth)/4;
+                        cells.push({a,b,d,e,avgZ,avgD});
+                    }
+                }
+                cells.sort((x,y)=>y.avgD-x.avgD);
+
+                // Draw surface
+                cells.forEach(({a,b,d,e,avgZ})=>{
+                    ctx.beginPath();
+                    ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+                    ctx.lineTo(d.x,d.y); ctx.lineTo(e.x,e.y);
+                    ctx.closePath();
+                    ctx.fillStyle   = getColor(avgZ, Z_CLAMP);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+                    ctx.lineWidth   = 0.4;
+                    ctx.stroke();
+                });
+
+                // ── Axes ─────────────────────────────────────────────────
+                const ZF = -1.0;
+                const origin = gp(0,      ROWS-1, ZF);
+                const axX    = gp(COLS-1, ROWS-1, ZF);
+                const axY    = gp(0,      0,      ZF);
+                const axZ    = gp(0,      ROWS-1, Z_CLAMP);
+
+                function axis(from, to, label, ticks, color) {
+                    ctx.save();
+                    ctx.strokeStyle=color; ctx.fillStyle=color;
+                    ctx.lineWidth=1.5;
+                    ctx.shadowColor='rgba(0,0,0,0.7)'; ctx.shadowBlur=3;
+                    ctx.beginPath(); ctx.moveTo(from.x,from.y); ctx.lineTo(to.x,to.y); ctx.stroke();
+                    const ang=Math.atan2(to.y-from.y, to.x-from.x);
+                    const AL=7;
+                    ctx.beginPath();
+                    ctx.moveTo(to.x,to.y);
+                    ctx.lineTo(to.x-AL*Math.cos(ang-0.4), to.y-AL*Math.sin(ang-0.4));
+                    ctx.lineTo(to.x-AL*Math.cos(ang+0.4), to.y-AL*Math.sin(ang+0.4));
+                    ctx.closePath(); ctx.fill();
+                    ctx.shadowBlur=4; ctx.font='bold 9px Inter,sans-serif';
+                    ctx.textAlign='center'; ctx.textBaseline='middle';
+                    ctx.fillText(label, to.x+12*Math.cos(ang), to.y+12*Math.sin(ang));
+                    ctx.lineWidth=0.8; ctx.font='7px Inter,sans-serif'; ctx.shadowBlur=0;
+                    ticks.forEach(({f,t:txt})=>{
+                        const tx=from.x+(to.x-from.x)*f, ty=from.y+(to.y-from.y)*f;
+                        const pa=ang+Math.PI/2; const TL=3;
+                        ctx.beginPath();
+                        ctx.moveTo(tx+TL*Math.cos(pa),ty+TL*Math.sin(pa));
+                        ctx.lineTo(tx-TL*Math.cos(pa),ty-TL*Math.sin(pa));
+                        ctx.stroke();
+                        ctx.fillText(txt, tx+9*Math.cos(pa+Math.PI), ty+9*Math.sin(pa+Math.PI));
+                    });
+                    ctx.restore();
+                }
+
+                axis(origin, axX, 'X',   [{f:0.25,t:'-D/2'},{f:0.5,t:'0'},{f:0.75,t:'+D/2'}], 'rgba(100,200,255,0.90)');
+                axis(origin, axY, 'Y',   [{f:0.25,t:'+D/2'},{f:0.5,t:'0'},{f:0.75,t:'-D/2'}], 'rgba(100,255,160,0.90)');
+                axis(origin, axZ, zLabel,[{f:0.3,t:'-1σ'},{f:0.6,t:'0'},{f:0.85,t:'+1σ'}],    'rgba(255,180,80,0.95)');
+
+                // ── Colour bar ────────────────────────────────────────────
+                const bx=W-20, by=H*0.18, bh=H*0.55, bw=7;
+                const gr=ctx.createLinearGradient(0,by+bh,0,by);
+                getGradStops().forEach(([s,c])=>gr.addColorStop(s,c));
+                ctx.fillStyle=gr; ctx.fillRect(bx,by,bw,bh);
+                ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=0.5;
+                ctx.strokeRect(bx,by,bw,bh);
+                ctx.fillStyle='rgba(255,255,255,0.80)';
+                ctx.font='7px Inter,sans-serif'; ctx.textAlign='right';
+                ctx.fillText('+2.5σ',bx-2,by+4);
+                ctx.fillText('0',bx-2,by+bh/2);
+                ctx.fillText('-2.5σ',bx-2,by+bh);
+            }
+
+            return { draw, resize };
+        }
+
+        // ── Instantiate the three 3D surfaces ─────────────────────────────────
+        let surf3D  = null;   // HO wavefront
+        let surfAtm = null;   // Full atmosphere
+        let surfDM  = null;   // DM mirror
+
+        function init3D() {
+            surf3D  = make3DSurface('canvas-3d',  {
+                theta: (210*Math.PI/180), phi: 0.48,
+                zLabel: 'φ (σ)', colormap: 'jet'
             });
-        }  // end draw3DSurface
+            surfAtm = make3DSurface('canvas-atm', {
+                theta: (225*Math.PI/180), phi: 0.52,  // slightly more tilted — full tip-tilt visible
+                zLabel: 'φ (σ)', colormap: 'coolwarm'
+            });
+            surfDM  = make3DSurface('canvas-dm',  {
+                theta: (210*Math.PI/180), phi: 0.48,
+                zLabel: 'V (σ)', colormap: 'copper'   // copper = mirror-like
+            });
+        }
 
 
         async function runLoopStep(singleOnly = false) {
@@ -698,17 +781,18 @@
                 const res = await fetch('/api/run_step', { method: 'POST' });
                 const data = await res.json();
                 
-                // Update UI elements
-                document.getElementById('metric-rms').innerText = data.rms.toFixed(3);
+                // Update metrics
+                document.getElementById('metric-rms').innerText    = data.rms.toFixed(3);
                 document.getElementById('metric-strehl').innerText = data.strehl.toFixed(3);
                 document.getElementById('metric-regime').innerText = data.regime;
                 
-                document.getElementById('img-atm').src = data.atm_img;
-                if (data.res_grid) {
-                    lastGrid = data.res_grid;
-                }
+                // Update WFS (still 2D image)
                 document.getElementById('img-wfs').src = data.wfs_img;
-                document.getElementById('img-dm').src = data.dm_img;
+                
+                // Update the three 3D surfaces
+                if (data.atm_full_grid && surfAtm) surfAtm.draw(data.atm_full_grid);
+                if (data.res_grid      && surf3D)  surf3D.draw(data.res_grid);
+                if (data.dm_grid_3d   && surfDM)  surfDM.draw(data.dm_grid_3d);
                 
                 // Update rolling charts
                 chart.data.datasets[0].data = data.rms_history.concat(Array(100 - data.rms_history.length).fill(null));
