@@ -1,0 +1,147 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-cyan: var(--cyan);
+  --color-amber: var(--amber);
+  --color-panel: var(--panel);
+  --color-slate-muted: var(--slate-muted);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --radius: 0.375rem;
+  --background: #070B14;
+  --foreground: #E8ECF2;
+  --card: #0D1526;
+  --card-foreground: #E8ECF2;
+  --popover: #0D1526;
+  --popover-foreground: #E8ECF2;
+  --primary: #22D3EE;
+  --primary-foreground: #070B14;
+  --secondary: #131c30;
+  --secondary-foreground: #E8ECF2;
+  --muted: #131c30;
+  --muted-foreground: #64748B;
+  --accent: #FB923C;
+  --accent-foreground: #070B14;
+  --destructive: #ef4444;
+  --destructive-foreground: #E8ECF2;
+  --border: rgba(34, 211, 238, 0.15);
+  --input: rgba(34, 211, 238, 0.2);
+  --ring: #22D3EE;
+  --cyan: #22D3EE;
+  --amber: #FB923C;
+  --panel: rgba(13, 21, 38, 0.85);
+  --slate-muted: #64748B;
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html, body { background-color: var(--color-background); color: var(--color-foreground); }
+  body { font-family: var(--font-mono); -webkit-font-smoothing: antialiased; }
+}
+
+@utility glass-panel {
+  background:
+    radial-gradient(ellipse at top, rgba(34, 211, 238, 0.035), transparent 68%),
+    linear-gradient(180deg, rgba(7, 11, 20, 0.12), rgba(7, 11, 20, 0.03));
+  backdrop-filter: blur(1.5px) saturate(112%);
+  border: 1px solid rgba(34, 211, 238, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    inset 0 0 48px rgba(34, 211, 238, 0.025),
+    0 22px 70px -48px rgba(0, 0, 0, 0.85);
+}
+
+@utility sky-panel {
+  background:
+    linear-gradient(180deg, rgba(7, 11, 20, 0.05), rgba(7, 11, 20, 0.015));
+  border: 1px solid rgba(34, 211, 238, 0.065);
+  box-shadow: inset 0 0 42px rgba(34, 211, 238, 0.018);
+}
+
+@utility constellation-field {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(232, 236, 242, 0.45) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 78% 32%, rgba(34, 211, 238, 0.35) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 42% 82%, rgba(251, 146, 60, 0.28) 0 1px, transparent 1.5px),
+    linear-gradient(120deg, transparent 0 44%, rgba(34, 211, 238, 0.10) 45%, transparent 46% 100%);
+}
+
+@utility viewport-blend {
+  mix-blend-mode: screen;
+  opacity: 0.85;
+}
+
+
+@utility panel-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--slate-muted);
+}
+
+@keyframes vajra-twinkle {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+@keyframes vajra-drift-1 {
+  from { transform: translate3d(0,0,0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+@keyframes vajra-pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px transparent; }
+}
+@keyframes vajra-dome-rotate {
+  from { transform: rotate(-12deg); }
+  50% { transform: rotate(12deg); }
+  to { transform: rotate(-12deg); }
+}
+@keyframes vajra-tube-tilt {
+  0%, 100% { transform: rotate(-18deg); }
+  50% { transform: rotate(-32deg); }
+}
+@keyframes vajra-panel-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.vajra-fade-in { animation: vajra-panel-in 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vajra-reduce-motion * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

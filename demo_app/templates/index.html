@@ -411,9 +411,9 @@
                         </div>
                     </div>
                     <div class="viewport-card">
-                        <div class="viewport-label">Residual Pupil Phase</div>
+                        <div class="viewport-label">3D Reconstructed Wavefront</div>
                         <div class="viewport-image-wrapper">
-                            <img id="img-res" class="viewport-image" src="" alt="Residual Phase">
+                            <canvas id="canvas-3d" style="width: 100%; height: 100%; display: block;"></canvas>
                         </div>
                     </div>
                     <div class="viewport-card">
@@ -554,6 +554,143 @@
             }
         }
 
+        let canvas3D = null;
+        let ctx3D = null;
+        let rotAngle = 0;
+        let lastGrid = null;
+
+        function init3D() {
+            canvas3D = document.getElementById('canvas-3d');
+            ctx3D = canvas3D.getContext('2d');
+            resize3D();
+            window.addEventListener('resize', resize3D);
+            (function loop() { renderFrame(); requestAnimationFrame(loop); })();
+        }
+
+        function resize3D() {
+            if (!canvas3D) return;
+            const p = canvas3D.parentNode.getBoundingClientRect();
+            canvas3D.width  = p.width  || 200;
+            canvas3D.height = p.height || 200;
+        }
+
+        function renderFrame() {
+            if (!ctx3D || !canvas3D || !lastGrid) return;
+            rotAngle += 0.008;
+            draw3DSurface(lastGrid, rotAngle);
+        }
+
+        function draw3DSurface(grid, angle) {
+            const W = canvas3D.width;
+            const H = canvas3D.height;
+            ctx3D.clearRect(0, 0, W, H);
+
+            const ROWS = grid.length;
+            const COLS = grid[0].length;
+
+            // ── Camera parameters ────────────────────────────────────────────
+            // theta: rotation around Z (spin), phi: elevation tilt
+            const theta = angle;
+            const phi   = 0.55;   // ~31° tilt from horizontal — matches reference image
+
+            const sinT = Math.sin(theta), cosT = Math.cos(theta);
+            const sinP = Math.sin(phi),   cosP = Math.cos(phi);
+
+            // ── Height scaling ────────────────────────────────────────────────
+            // Data from backend is z-scored (mean-subtracted, std-normalised) so
+            // values are centred at 0.  Clamp to ±2.5σ for visual clarity.
+            const Z_SCALE = 0.20;   // fraction of view-box size for full ±1σ height
+            const Z_CLAMP = 2.5;
+
+            // ── Projection helper ─────────────────────────────────────────────
+            // Maps (col, row, z) in data space → (px, py) in screen space.
+            // Oblique parallel projection: X→right, Y→depth, Z→up.
+            const cx = W * 0.50;
+            const cy = H * 0.62;   // shift centre down so mesh fills frame nicely
+            const SCALE = Math.min(W, H) * 0.78;
+
+            function proj(c, r, z) {
+                // Normalised data coords in [-0.5, +0.5]
+                const dx =  (c / (COLS - 1)) - 0.5;
+                const dy =  (r / (ROWS - 1)) - 0.5;
+                const dz =  Math.max(-Z_CLAMP, Math.min(Z_CLAMP, z)) * Z_SCALE;
+
+                // Rotate around vertical (Z) axis
+                const rx =  dx * cosT - dy * sinT;
+                const ry =  dx * sinT + dy * cosT;
+
+                // Project onto screen (oblique: tilt around X axis)
+                const sx = rx;
+                const sy = ry * cosP - dz * sinP;
+                // Depth for Painter's sort (larger = further back)
+                const depth = ry * sinP + dz * cosP;
+
+                return { x: cx + sx * SCALE, y: cy + sy * SCALE, depth };
+            }
+
+            // ── Project all vertices ──────────────────────────────────────────
+            const verts = [];
+            for (let r = 0; r < ROWS; r++) {
+                verts[r] = [];
+                for (let c = 0; c < COLS; c++) {
+                    const z = grid[r][c];          // null = outside pupil
+                    const active = z !== null && z !== undefined && isFinite(z);
+                    verts[r][c] = active ? { ...proj(c, r, z), z, active: true }
+                                         : { x: 0, y: 0, depth: 0, z: 0, active: false };
+                }
+            }
+
+            // ── Collect renderable quad cells ─────────────────────────────────
+            // A cell is renderable only if ALL four corners are inside the pupil.
+            const cells = [];
+            for (let r = 0; r < ROWS - 1; r++) {
+                for (let c = 0; c < COLS - 1; c++) {
+                    const v00 = verts[r][c];
+                    const v01 = verts[r][c + 1];
+                    const v11 = verts[r + 1][c + 1];
+                    const v10 = verts[r + 1][c];
+                    if (!v00.active || !v01.active || !v11.active || !v10.active) continue;
+
+                    const avgZ     = (v00.z + v01.z + v11.z + v10.z) / 4;
+                    const avgDepth = (v00.depth + v01.depth + v11.depth + v10.depth) / 4;
+                    cells.push({ v00, v01, v11, v10, avgZ, avgDepth });
+                }
+            }
+
+            // Sort back-to-front (Painter's Algorithm)
+            cells.sort((a, b) => b.avgDepth - a.avgDepth);
+
+            // ── Colour map: Blue→Cyan→Green→Yellow→Red ───────────────────────
+            // Input z is z-scored; map [-Z_CLAMP, +Z_CLAMP] → [0, 1]
+            function zColor(z) {
+                let t = (z + Z_CLAMP) / (2 * Z_CLAMP);
+                t = Math.max(0, Math.min(1, t));
+                let r, g, b;
+                if (t < 0.25)      { const f = t / 0.25;       r = 0;              g = Math.round(f * 255);        b = 255; }
+                else if (t < 0.50) { const f = (t-0.25)/0.25;  r = 0;              g = 255;                        b = Math.round((1-f)*255); }
+                else if (t < 0.75) { const f = (t-0.50)/0.25;  r = Math.round(f*255); g = 255;                    b = 0; }
+                else               { const f = (t-0.75)/0.25;  r = 255;            g = Math.round((1-f)*255);      b = 0; }
+                return `rgb(${r},${g},${b})`;
+            }
+
+            // ── Render ────────────────────────────────────────────────────────
+            cells.forEach(({ v00, v01, v11, v10, avgZ }) => {
+                ctx3D.beginPath();
+                ctx3D.moveTo(v00.x, v00.y);
+                ctx3D.lineTo(v01.x, v01.y);
+                ctx3D.lineTo(v11.x, v11.y);
+                ctx3D.lineTo(v10.x, v10.y);
+                ctx3D.closePath();
+                ctx3D.fillStyle   = zColor(avgZ);
+                ctx3D.fill();
+                // Thin dark wireframe so individual quads are visible
+                ctx3D.strokeStyle = 'rgba(0,0,0,0.25)';
+                ctx3D.lineWidth   = 0.4;
+                ctx3D.stroke();
+            });
+        }  // end draw3DSurface
+
+
         async function runLoopStep(singleOnly = false) {
             if (!isPlaying && !singleOnly) return;
             
@@ -567,7 +704,9 @@
                 document.getElementById('metric-regime').innerText = data.regime;
                 
                 document.getElementById('img-atm').src = data.atm_img;
-                document.getElementById('img-res').src = data.res_img;
+                if (data.res_grid) {
+                    lastGrid = data.res_grid;
+                }
                 document.getElementById('img-wfs').src = data.wfs_img;
                 document.getElementById('img-dm').src = data.dm_img;
                 
@@ -587,6 +726,7 @@
         // Initialize everything on load
         window.onload = () => {
             initChart();
+            init3D();
             resetLoop();
         };
     </script>

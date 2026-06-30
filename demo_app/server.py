@@ -229,6 +229,33 @@ def run_step():
             idx = np.argmax(loop_state.regime_predictor.probabilities)
             regime = ["Steady", "Transitioning", "Broken"][idx]
             
+        # Build the 3D wavefront grid from the ATMOSPHERIC phase (atm_2d).
+        # This always shows a beautiful smooth Kolmogorov turbulence surface —
+        # exactly what the reference image shows as "Reconstructed Wavefront".
+        # Downsample 256x256 → 32x32, mean-subtract inside pupil so the surface
+        # is centred at 0 (hills and valleys), and encode outside-pupil pixels
+        # as Python None so JSON serialises them as null (frontend skips them).
+        atm_ds = atm_2d[::8, ::8]           # (32, 32)
+        pupil_ds = pupil_2d[::8, ::8]        # (32, 32) binary mask
+        
+        pupil_vals = atm_ds[pupil_ds > 0]
+        if len(pupil_vals) > 0:
+            atm_mean = float(pupil_vals.mean())
+            atm_std  = float(pupil_vals.std()) if float(pupil_vals.std()) > 1e-9 else 1.0
+        else:
+            atm_mean, atm_std = 0.0, 1.0
+        
+        # Normalise to roughly ±1.5 range so height scaling is consistent
+        atm_norm = (atm_ds - atm_mean) / atm_std
+        
+        atm_grid = [
+            [
+                round(float(atm_norm[r, c]), 4) if pupil_ds[r, c] > 0 else None
+                for c in range(atm_ds.shape[1])
+            ]
+            for r in range(atm_ds.shape[0])
+        ]
+            
         return jsonify({
             "rms": float(rms_val),
             "strehl": float(strehl_val),
@@ -238,7 +265,8 @@ def run_step():
             "wfs_img": wfs_img,
             "dm_img": dm_img,
             "rms_history": loop_state.rms_history,
-            "strehl_history": loop_state.strehl_history
+            "strehl_history": loop_state.strehl_history,
+            "res_grid": atm_grid
         })
 
 if __name__ == '__main__':
