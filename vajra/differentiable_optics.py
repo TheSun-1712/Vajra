@@ -15,11 +15,11 @@ class DifferentiablePropagator(nn.Module):
         basis_arr = np.array([basis for basis in zernike_basis_numpy], dtype=np.float32) # (66, 65536)
         self.basis = torch.tensor(basis_arr, dtype=torch.float32, device=device) # (66, 65536)
 
-    def forward(self, predicted_zernikes, granulation_patches, raw_subimages, background_pedestal=10.0):
+    def forward(self, predicted_zernikes, granulation_patches, raw_subimages, background_pedestal=10.0, target_mode='solar'):
         """Computes the image-to-image reconstruction loss.
         
         predicted_zernikes: (Batch, 66)
-        granulation_patches: (Batch * 256, 16, 16)
+        granulation_patches: (Batch * 256, 16, 16) or None if target_mode is 'point'
         raw_subimages: (Batch * 256, 16, 16)
         """
         batch_size = predicted_zernikes.size(0)
@@ -46,13 +46,18 @@ class DifferentiablePropagator(nn.Module):
         psf_sum = torch.sum(psf, dim=(-2, -1), keepdim=True) + 1e-8
         psf = psf / psf_sum
         
-        # 4. FFT Convolution of the solar scene patch with the WFS PSF
-        scene_fft = torch.fft.fft2(granulation_patches)
-        psf_fft = torch.fft.fft2(psf)
-        convolved_fft = scene_fft * psf_fft
-        convolved = torch.real(torch.fft.ifft2(convolved_fft))
-        convolved = torch.fft.fftshift(convolved, dim=(-2, -1))
-        
+        # 4. FFT Convolution or direct PSF mapping depending on mode
+        if target_mode == 'solar':
+            scene_fft = torch.fft.fft2(granulation_patches)
+            psf_fft = torch.fft.fft2(psf)
+            convolved_fft = scene_fft * psf_fft
+            convolved = torch.real(torch.fft.ifft2(convolved_fft))
+            convolved = torch.fft.fftshift(convolved, dim=(-2, -1))
+        else:
+            # For a point star guide source, convolving with a delta function
+            # yields the diffraction spot PSF itself.
+            convolved = psf
+            
         # Normalize and match flux of the simulated images with the observed raw subimages
         convolved_sum = torch.sum(convolved, dim=(-2, -1), keepdim=True) + 1e-8
         raw_flux = torch.sum(raw_subimages, dim=(-2, -1), keepdim=True)

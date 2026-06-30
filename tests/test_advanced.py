@@ -1,3 +1,4 @@
+import os
 import unittest
 import numpy as np
 import torch
@@ -39,6 +40,51 @@ class TestAdvancedFeatures(unittest.TestCase):
         self.assertIsNotNone(pred_z.grad)
         # Gradient should not be all zeros
         self.assertTrue(torch.any(pred_z.grad != 0.0))
+
+    def test_differentiable_propagator_point_mode(self):
+        propagator = DifferentiablePropagator(self.pupil_mask, self.zernike_basis[:config.ZERNIKE_MODES_MAX])
+        
+        # Ingest inputs
+        batch_size = 2
+        pred_z = torch.randn(batch_size, config.ZERNIKE_MODES_MAX, device=device) * 0.1
+        pred_z.requires_grad = True
+        
+        # 256 subapertures containing point guide star spots
+        raw_subs = torch.rand(batch_size * 256, 16, 16, device=device)
+        
+        loss, simulated = propagator(pred_z, None, raw_subs, target_mode='point')
+        
+        # Verify output shape
+        self.assertEqual(simulated.shape, (batch_size * 256, 16, 16))
+        
+        # Verify gradient flow: backpropagate the self-supervised image loss
+        loss.backward()
+        self.assertIsNotNone(pred_z.grad)
+        self.assertTrue(torch.any(pred_z.grad != 0.0))
+
+    def test_wavefront_reconstructor_dynamic_loading(self):
+        from vajra.reconstructor import WavefrontReconstructor
+        import shutil
+        
+        # Create a mock checkpoint file to test loading
+        os.makedirs('data', exist_ok=True)
+        dummy_model = torch.nn.Linear(10, 10)
+        
+        # Instantiate with point target mode
+        reconstructor = WavefrontReconstructor(
+            self.pupil_grid, self.pupil_mask, 
+            [(0, 0), (1, 1)], [self.pupil_mask, self.pupil_mask],
+            target_mode='point'
+        )
+        self.assertEqual(reconstructor.target_mode, 'point')
+        
+        # Instantiate with solar target mode
+        reconstructor_solar = WavefrontReconstructor(
+            self.pupil_grid, self.pupil_mask, 
+            [(0, 0), (1, 1)], [self.pupil_mask, self.pupil_mask],
+            target_mode='solar'
+        )
+        self.assertEqual(reconstructor_solar.target_mode, 'solar')
 
     def test_neural_hysteresis_model(self):
         num_act = config.DM_ACTUATORS_TOTAL

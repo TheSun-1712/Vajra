@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#070b14">
+  <title>VAJRA · NLST Adaptive Optics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root{--sky:#070b14;--glass:rgba(13,21,38,.85);--cyan:#22d3ee;--orange:#fb923c;--white:#e8ecf2;--muted:#64748b;--line:rgba(34,211,238,.22);--mono:"JetBrains Mono",monospace}
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--sky);color:var(--white);font-family:Inter,sans-serif}
+    body{min-height:100vh;overflow-x:hidden}.sky{position:fixed;inset:0;overflow:hidden;background:radial-gradient(circle at 68% 18%,#13243a 0,transparent 32%),linear-gradient(#08101e,#070b14 68%,#04070d);z-index:0}
+    .stars{position:absolute;inset:-12%;background-repeat:repeat;background-size:260px 260px;opacity:.7;animation:drift 80s linear infinite}
+    .stars::after{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,#fff 0 1px,transparent 1.4px);background-size:83px 71px;animation:twinkle 5s ease-in-out infinite}
+    .s1{background-image:radial-gradient(circle,rgba(255,255,255,.8) 0 1px,transparent 1.2px);background-size:91px 83px;animation-duration:110s}
+    .s2{background-image:radial-gradient(circle,rgba(137,220,255,.8) 0 1.2px,transparent 1.5px);background-size:151px 127px;animation-duration:78s;animation-direction:reverse}
+    .s3{background-image:radial-gradient(circle,rgba(255,229,191,.9) 0 1.5px,transparent 1.8px);background-size:233px 197px;animation-duration:55s}
+    @keyframes drift{to{transform:translate3d(7%,3%,0)}}@keyframes twinkle{50%{opacity:.25}}
+    .observatory{position:absolute;left:50%;bottom:-42px;width:min(620px,62vw);height:290px;transform:translateX(-50%);opacity:.72;filter:drop-shadow(-4px -2px 8px rgba(34,211,238,.18)) drop-shadow(4px 0 8px rgba(251,146,60,.14))}
+    .base{position:absolute;bottom:0;left:7%;width:86%;height:36%;background:#04070b;border-radius:18px 18px 0 0;border-top:1px solid rgba(34,211,238,.24)}
+    .dome{position:absolute;bottom:26%;left:18%;width:64%;aspect-ratio:2/1;background:#05090f;border-radius:320px 320px 18px 18px;overflow:hidden;border-top:1px solid rgba(251,146,60,.3)}
+    .slit{position:absolute;left:45%;top:-6%;width:11%;height:118%;background:#101a28;transform-origin:50% 100%;animation:track 74s ease-in-out infinite alternate;box-shadow:0 0 10px rgba(34,211,238,.14)}
+    .tube{position:absolute;left:32%;top:37%;width:39%;height:14px;border:4px solid #172333;background:#080e17;transform:rotate(-24deg);transform-origin:60% 50%;animation:tilt 68s ease-in-out infinite alternate}
+    @keyframes track{to{transform:rotate(7deg)}}@keyframes tilt{to{transform:rotate(-19deg)}}
+    .app{position:relative;z-index:2;min-height:100vh;padding:16px 20px 20px;display:grid;grid-template-rows:auto 1fr auto;gap:14px}
+    .topbar,.panel{background:linear-gradient(145deg,rgba(16,27,47,.9),rgba(9,16,30,.78));border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.25),inset 0 1px rgba(255,255,255,.025);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+    .topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-radius:12px;animation:arrive .6s both}
+    .brandline{display:flex;align-items:center;gap:12px}.mark{width:34px;height:34px;border:1px solid var(--cyan);display:grid;place-items:center;color:var(--cyan);font:700 14px var(--mono);clip-path:polygon(18% 0,100% 0,100% 82%,82% 100%,0 100%,0 18%)}
+    h1{font:600 17px var(--mono);letter-spacing:.12em;margin:0}.subtitle{font:400 9px var(--mono);letter-spacing:.15em;color:#92a4ba;text-transform:uppercase;margin-top:4px}
+    .status-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.pill{font:500 10px var(--mono);color:#aebccc;border:1px solid rgba(100,116,139,.3);background:rgba(2,7,15,.45);padding:7px 10px;border-radius:4px}
+    .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cyan);margin-right:7px;box-shadow:0 0 8px var(--cyan);animation:pulse 2s infinite}@keyframes pulse{50%{opacity:.35}}
+    .workspace{min-height:0;display:grid;grid-template-columns:290px minmax(0,1fr);gap:14px}.panel{border-radius:12px;overflow:hidden}
+    .controls{padding:15px;animation:arrive .62s .12s both}.view-panel{padding:15px;animation:arrive .62s .22s both}.chart-panel{height:195px;padding:14px 16px;animation:arrive .62s .32s both}
+    @keyframes arrive{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+    .panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:13px}.eyebrow{font:600 10px var(--mono);letter-spacing:.14em;color:#b9c6d6}.index{font:500 9px var(--mono);color:var(--cyan)}
+    .segmented{position:relative;display:grid;grid-template-columns:1fr 1fr;padding:3px;background:rgba(2,7,15,.6);border:1px solid rgba(100,116,139,.24);border-radius:6px;margin-bottom:13px}
+    .segmented::before{content:"";position:absolute;inset:3px 50% 3px 3px;background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.3);border-radius:4px;transition:transform .25s}.segmented.classical::before{transform:translateX(calc(100% - 3px))}
+    .mode{position:relative;z-index:1;border:0;background:none;color:#718198;padding:8px 2px;font:600 9px var(--mono);cursor:pointer}.mode.active{color:var(--cyan)}
+    label,.small-label{display:block;color:#77879b;font:500 9px var(--mono);letter-spacing:.08em;text-transform:uppercase}.field{margin-bottom:13px}.field-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.value{font:600 11px var(--mono);color:var(--orange)}
+    select{width:100%;appearance:none;color:#c7d2df;background:rgba(2,7,15,.55) linear-gradient(45deg,transparent 50%,var(--cyan) 50%) calc(100% - 13px) 50%/5px 5px no-repeat;border:1px solid rgba(100,116,139,.28);border-radius:5px;padding:9px;font:500 10px var(--mono);outline:none}
+    input[type=range]{--p:35%;appearance:none;width:100%;height:3px;margin:5px 0;background:linear-gradient(90deg,var(--orange) var(--p),rgba(100,116,139,.22) var(--p));border-radius:3px;outline:none}
+    input[type=range]::-webkit-slider-thumb{appearance:none;width:13px;height:13px;background:#ffd0ad;border:2px solid var(--orange);border-radius:50%;box-shadow:0 0 9px rgba(251,146,60,.65);cursor:grab}input[type=range]:active::-webkit-slider-thumb{box-shadow:0 0 16px var(--orange)}
+    .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.metric{padding:10px;border:1px solid rgba(100,116,139,.22);background:rgba(2,7,15,.42);border-radius:6px}.metric strong{display:block;font:600 21px var(--mono);letter-spacing:-.05em;color:var(--cyan);margin-top:5px}.metric:nth-child(2) strong{color:var(--orange)}.unit{font-size:9px;color:#66778d}
+    .regime{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid rgba(100,116,139,.18);font:500 9px var(--mono);color:#718198}.regime b{font-weight:600;color:#91e6c7}.regime b::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:#34d399;margin-right:6px;box-shadow:0 0 6px #34d399}
+    .actions{display:grid;gap:7px;margin-top:8px}button.action{border-radius:5px;padding:9px;font:600 10px var(--mono);letter-spacing:.05em;cursor:pointer;transition:.18s}
+    .primary{background:var(--cyan);color:#061019;border:1px solid var(--cyan)}.secondary{color:#94a6ba;background:rgba(2,7,15,.3);border:1px solid rgba(34,211,238,.3)}button.action:hover{transform:translateY(-1px);box-shadow:0 0 18px rgba(34,211,238,.22)}
+    .view-grid{height:calc(100% - 28px);min-height:390px;display:grid;grid-template-columns:1fr 1fr;gap:9px}.viewport{min-height:0;display:flex;flex-direction:column;border:1px solid rgba(100,116,139,.22);background:rgba(2,7,15,.58);border-radius:7px;overflow:hidden}
+    .feed-head{display:flex;justify-content:space-between;padding:8px 9px;font:500 9px var(--mono);letter-spacing:.07em;color:#9cadbf;border-bottom:1px solid rgba(100,116,139,.17)}.feed-head span:last-child{color:#4f6279}.feed{position:relative;flex:1;min-height:0;display:grid;place-items:center;overflow:hidden;background:#03070d}
+    .feed img{width:100%;height:100%;object-fit:contain;image-rendering:auto}.scan{position:absolute;inset:0;background:linear-gradient(transparent 49%,rgba(34,211,238,.08) 50%,transparent 51%);background-size:100% 7px;pointer-events:none;opacity:.45}
+    .chart-head{display:flex;justify-content:space-between;align-items:center}.legend{display:flex;gap:18px;font:500 9px var(--mono);color:#8292a6}.swatch{display:inline-block;width:7px;height:7px;margin-right:6px}.chart-wrap{height:145px}
+    .error{position:fixed;right:18px;bottom:18px;z-index:5;background:#23130c;border:1px solid rgba(251,146,60,.5);color:#ffc49a;padding:10px 12px;border-radius:5px;font:10px var(--mono);display:none}
+    @media(max-width:900px){body{overflow:auto}.app{padding:10px}.topbar{align-items:flex-start;gap:12px}.status-row{max-width:48%}.workspace{grid-template-columns:1fr}.view-grid{min-height:650px}.chart-panel{height:220px}}
+    @media(max-width:560px){.topbar{flex-direction:column}.status-row{max-width:none;justify-content:flex-start}.view-grid{grid-template-columns:1fr;min-height:1100px}.chart-panel{height:230px}.legend{gap:8px;flex-direction:column}.observatory{width:120vw}}
+    @media(prefers-reduced-motion:reduce){.stars,.stars::after,.slit,.tube,.dot,.topbar,.controls,.view-panel,.chart-panel{animation:none!important}}
+  </style>
+  <style>
+    /* v2 composition: a single-screen observatory console, not an image wall */
+    @media (min-width: 901px) {
+      html,body{height:100%;overflow:hidden}
+      body::before{
+        content:"HANLE NIGHT OPERATIONS  /  UT+05:30";
+        position:fixed;z-index:1;left:24px;bottom:10px;
+        color:rgba(148,163,184,.52);font:500 8px var(--mono);letter-spacing:.18em
+      }
+      .sky{
+        background:
+          radial-gradient(ellipse at 75% 82%,rgba(251,146,60,.09),transparent 29%),
+          radial-gradient(ellipse at 18% 18%,rgba(34,211,238,.09),transparent 31%),
+          linear-gradient(155deg,#07101e 0,#050912 58%,#02050a 100%)
+      }
+      .observatory{
+        left:10px;right:auto;bottom:-28px;transform:none;width:410px;opacity:.9;
+        filter:drop-shadow(-3px -2px 10px rgba(34,211,238,.3)) drop-shadow(5px 0 12px rgba(251,146,60,.22))
+      }
+      .app{
+        height:100vh;min-height:0;max-width:1900px;margin:auto;
+        padding:18px 26px 26px;
+        grid-template-rows:68px minmax(0,1fr) 168px;
+        gap:12px
+      }
+      .topbar,.panel{
+        background:linear-gradient(135deg,rgba(12,22,39,.72),rgba(6,13,25,.58));
+        border-color:rgba(71,187,207,.26);
+        backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)
+      }
+      .topbar{padding:9px 14px;border-radius:9px}
+      .mark{width:31px;height:31px}
+      h1{font-size:15px;letter-spacing:.15em}
+      .subtitle{font-size:8px}
+      .workspace{
+        grid-template-columns:268px minmax(0,1fr);gap:12px;
+        height:calc(100vh - 298px);min-height:430px;overflow:hidden
+      }
+      .controls,.view-panel{height:100%;min-height:0;padding:13px}
+      .controls{overflow:hidden}
+      .panel-head{margin-bottom:10px}
+      .segmented{margin-bottom:10px}
+      .mode{padding:7px 2px}
+      .field{margin-bottom:10px}
+      .field-top{margin-bottom:6px}
+      select{padding:8px}
+      .metrics{margin:10px 0;gap:7px}
+      .metric{padding:8px 9px}
+      .metric strong{font-size:18px;margin-top:3px}
+      .regime{padding:7px 0}
+      .actions{grid-template-columns:1fr 1fr;margin-top:7px}
+      button.action{padding:8px 4px;font-size:8px}
+      .view-grid{
+        height:calc(100% - 24px);min-height:0;gap:8px;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        grid-template-rows:minmax(0,1fr)
+      }
+      .viewport{height:100%;min-height:0;background:rgba(1,6,13,.68)}
+      .feed-head{padding:6px 8px;font-size:8px}
+      .feed{padding:8px;min-height:0}
+      .feed img{
+        display:block;width:100%;height:100%;min-width:0;min-height:0;
+        max-width:100%;max-height:100%;object-fit:contain
+      }
+      .chart-panel{height:168px;min-height:0;padding:11px 15px}
+      .chart-head .panel-head{margin:0}
+      .chart-wrap{height:126px}
+    }
+    @media (min-width: 1500px) and (min-height: 850px) {
+      .app{grid-template-rows:72px minmax(0,1fr) 180px}
+      .workspace{grid-template-columns:300px minmax(0,1fr)}
+      .workspace{height:calc(100vh - 316px)}
+      .controls,.view-panel{padding:15px}
+      .field{margin-bottom:13px}
+      .metrics{margin:13px 0}
+      .metric{padding:10px}
+      .metric strong{font-size:21px}
+      .chart-wrap{height:137px}
+    }
+  </style>
+  <style>
+    /* v3: four equal portrait instruments in one horizontal optical bay */
+    @media (min-width:901px){
+      .app{
+        display:grid;
+        grid-template-columns:350px minmax(0,1fr);
+        grid-template-rows:64px minmax(0,1fr) 226px;
+        column-gap:18px;row-gap:16px;
+        height:100vh;max-width:none;padding:16px 20px 20px
+      }
+      .topbar{grid-column:1/-1;grid-row:1}
+      .workspace{display:contents}
+      .controls{
+        grid-column:1;grid-row:2;
+        height:auto;min-height:0;align-self:stretch;padding:20px
+      }
+      .view-panel{
+        grid-column:2;grid-row:2;
+        height:auto;min-height:0;padding:20px
+      }
+      .chart-panel{
+        grid-column:2;grid-row:3;
+        height:auto;min-height:0;padding:16px 20px
+      }
+      .panel{border-radius:14px}
+      .panel-head{justify-content:flex-start;gap:10px;margin-bottom:14px}
+      .panel-head::before{
+        content:"";width:3px;height:21px;flex:0 0 3px;
+        background:var(--orange);box-shadow:0 0 12px rgba(251,146,60,.28)
+      }
+      .panel-head .index{margin-left:auto}
+      .eyebrow{font-size:12px;color:#e8ecf2;letter-spacing:.04em}
+      .view-grid{
+        display:grid;height:calc(100% - 36px);min-height:0;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        grid-template-rows:minmax(0,1fr);gap:14px
+      }
+      .viewport{
+        display:grid;grid-template-rows:38px minmax(0,1fr);
+        height:100%;min-height:0;border-radius:12px;
+        border:1px solid rgba(100,116,139,.24);
+        background:rgba(7,13,25,.72);padding:12px;gap:0
+      }
+      .feed-head{
+        display:flex;align-items:center;justify-content:center;
+        border:0;padding:0;text-align:center;
+        color:#96a0af;font-size:10px;letter-spacing:.02em
+      }
+      .feed-head span:last-child{display:none}
+      .feed{
+        width:100%;height:100%;min-height:0;padding:0;
+        background:#020306;border-radius:5px;overflow:hidden
+      }
+      .feed img{
+        display:block;width:100%;height:100%;
+        object-fit:contain;object-position:center;
+        background:#020306
+      }
+      .scan{opacity:.16}
+      .actions{grid-template-columns:1fr;margin-top:12px}
+      .primary{
+        color:#fff;background:#f97316;border-color:#fb923c;
+        box-shadow:0 7px 18px rgba(249,115,22,.18)
+      }
+      .secondary{background:rgba(30,41,59,.65)}
+      button.action{padding:11px}
+      .chart-wrap{height:168px}
+      .chart-head .panel-head::before{height:20px}
+      .observatory{left:15px;width:370px;opacity:.78}
+    }
+    @media (min-width:901px) and (max-width:1300px){
+      .app{grid-template-columns:280px minmax(0,1fr);column-gap:12px}
+      .controls,.view-panel{padding:14px}
+      .view-grid{gap:8px}
+      .viewport{padding:7px}
+      .feed-head{font-size:8px}
+    }
+  </style>
+</head>
+<body>
+  <div class="sky" aria-hidden="true"><div class="stars s1"></div><div class="stars s2"></div><div class="stars s3"></div><div class="observatory"><div class="dome"><div class="slit"></div><div class="tube"></div></div><div class="base"></div></div></div>
+  <main class="app">
+    <header class="topbar">
+      <div class="brandline"><div class="mark">VJ</div><div><h1>SUNSHINE-ISRO <span style="color:#aeb9c8">VAJRA</span></h1><div class="subtitle">Versatile Adaptive-optics Joint Real-time Actuation</div></div></div>
+      <div class="status-row"><div class="pill"><i class="dot"></i>TELESCOPE: NLST 2.0m</div><div class="pill"><i class="dot"></i>SITE: IAO HANLE · 32.78°N</div></div>
+    </header>
+    <section class="workspace">
+      <aside class="panel controls">
+        <div class="panel-head"><span class="eyebrow">CONTROL CENTER</span><span class="index">SYS.01</span></div>
+        <div class="segmented" id="segmented"><button class="mode active" data-mode="vajra">VAJRA AO</button><button class="mode" data-mode="classical">CLASSICAL SH</button></div>
+        <div class="field"><div class="field-top"><label for="target">Sensing target</label></div><select id="target"><option value="solar">Solar granulation</option><option value="point">Point source / stellar</option></select></div>
+        <div class="field"><div class="field-top"><label for="r0">Fried parameter r₀</label><span class="value" id="r0v">8.0 cm</span></div><input id="r0" type="range" min="3" max="20" value="8" step=".5"></div>
+        <div class="field"><div class="field-top"><label for="wind">Wind velocity</label><span class="value" id="windv">10.0 m/s</span></div><input id="wind" type="range" min="0" max="30" value="10" step=".5"></div>
+        <div class="metrics"><div class="metric"><span class="small-label">Residual RMS</span><strong id="rms">0.000</strong><span class="unit">RAD</span></div><div class="metric"><span class="small-label">Strehl ratio</span><strong id="strehl">0.000</strong><span class="unit">NORMALIZED</span></div></div>
+        <div class="regime"><span>SEEING REGIME</span><b id="regime">INITIALIZING</b></div>
+        <div class="actions"><button class="action primary" id="play">RESUME LOOP</button><button class="action secondary" id="reset">RESET OPTICS</button></div>
+      </aside>
+      <section class="panel view-panel">
+        <div class="panel-head"><span class="eyebrow">LIVE OPTICAL VIEWPORTS</span><span class="index" id="frame">FRAME 000000</span></div>
+        <div class="view-grid">
+          <article class="viewport"><div class="feed-head"><span>ATMOSPHERE PHASE SCREEN</span><span>Φ [RAD]</span></div><div class="feed"><img id="atm" alt="Atmospheric phase screen"><div class="scan"></div></div></article>
+          <article class="viewport"><div class="feed-head"><span>RESIDUAL PUPIL PHASE</span><span>ΔΦ [RAD]</span></div><div class="feed"><img id="res" alt="Residual pupil phase"><div class="scan"></div></div></article>
+          <article class="viewport"><div class="feed-head"><span>WFS CAMERA FRAME</span><span>16-BIT ADU</span></div><div class="feed"><img id="wfs" alt="Wavefront sensor camera"><div class="scan"></div></div></article>
+          <article class="viewport"><div class="feed-head"><span>DM ACTUATOR MAP</span><span>324 CH</span></div><div class="feed"><img id="dm" alt="Deformable mirror actuator map"><div class="scan"></div></div></article>
+        </div>
+      </section>
+    </section>
+    <section class="panel chart-panel">
+      <div class="chart-head"><div class="panel-head"><span class="eyebrow">LOOP PERFORMANCE HISTORY</span></div><div class="legend"><span><i class="swatch" style="background:#22d3ee"></i>RESIDUAL RMS</span><span><i class="swatch" style="background:#fb923c"></i>STREHL RATIO</span></div></div>
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    </section>
+  </main>
+  <div class="error" id="error">TELEMETRY LINK INTERRUPTED</div>
+  <script>
+    const state={playing:false,busy:false,mode:"vajra",frame:0};
+    const $=id=>document.getElementById(id);
+    const chart=new Chart($("chart"),{type:"line",data:{labels:Array.from({length:100},(_,i)=>i),datasets:[
+      {data:[],borderColor:"#22d3ee",backgroundColor:"rgba(34,211,238,.08)",fill:true,borderWidth:1.5,pointRadius:0,tension:.28,yAxisID:"y"},
+      {data:[],borderColor:"#fb923c",backgroundColor:"transparent",borderWidth:1.5,pointRadius:0,tension:.28,yAxisID:"y1"}]},
+      options:{responsive:true,maintainAspectRatio:false,animation:{duration:180},interaction:{intersect:false},plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:{display:false},y:{position:"left",ticks:{color:"#64748b",font:{family:"JetBrains Mono",size:8}},grid:{color:"rgba(100,116,139,.12)"},border:{display:false}},
+      y1:{position:"right",min:0,max:1,ticks:{color:"#64748b",font:{family:"JetBrains Mono",size:8}},grid:{display:false},border:{display:false}}}}});
+    function paintRange(el){el.style.setProperty("--p",((el.value-el.min)/(el.max-el.min)*100)+"%")}
+    function params(){return{mode:state.mode,r0:+$("r0").value/100,wind_speed:+$("wind").value,target_mode:$("target").value}}
+    async function reset(){
+      state.playing=false;$("play").textContent="RESUME LOOP";
+      await fetch("/api/reset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(params())});
+      chart.data.datasets.forEach(d=>d.data=[]);chart.update("none");state.frame=0;step(true)
+    }
+    function count(el,to){const from=+(el.textContent)||0,start=performance.now();const tick=t=>{const p=Math.min(1,(t-start)/220);el.textContent=(from+(to-from)*p).toFixed(3);if(p<1)requestAnimationFrame(tick)};requestAnimationFrame(tick)}
+    async function step(single=false){
+      if((!state.playing&&!single)||state.busy)return;state.busy=true;
+      try{const r=await fetch("/api/run_step",{method:"POST"});if(!r.ok)throw Error();const d=await r.json();$("error").style.display="none";
+        count($("rms"),d.rms);count($("strehl"),d.strehl);$("regime").textContent=d.regime.toUpperCase();
+        [["atm","atm_img"],["res","res_img"],["wfs","wfs_img"],["dm","dm_img"]].forEach(([a,b])=>$ (a).src=d[b]);
+        chart.data.datasets[0].data=d.rms_history;chart.data.datasets[1].data=d.strehl_history;chart.update();
+        $("frame").textContent="FRAME "+String(++state.frame).padStart(6,"0");
+      }catch(e){$("error").style.display="block";state.playing=false;$("play").textContent="RESUME LOOP"}finally{state.busy=false}
+      if(state.playing&&!single)setTimeout(()=>step(),80)
+    }
+    document.querySelectorAll(".mode").forEach(b=>b.onclick=()=>{state.mode=b.dataset.mode;document.querySelectorAll(".mode").forEach(x=>x.classList.toggle("active",x===b));$("segmented").classList.toggle("classical",state.mode==="classical");reset()});
+    $("r0").oninput=e=>{$("r0v").textContent=(+e.target.value).toFixed(1)+" cm";paintRange(e.target)};
+    $("wind").oninput=e=>{$("windv").textContent=(+e.target.value).toFixed(1)+" m/s";paintRange(e.target)};
+    ["r0","wind"].forEach(id=>{$(id).onchange=reset;paintRange($(id))});$("target").onchange=reset;$("reset").onclick=reset;
+    $("play").onclick=()=>{state.playing=!state.playing;$("play").textContent=state.playing?"PAUSE LOOP":"RESUME LOOP";if(state.playing)step()};
+    reset();
+  </script>
+</body>
+</html>

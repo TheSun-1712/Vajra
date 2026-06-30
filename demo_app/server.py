@@ -54,7 +54,7 @@ class AOLoopState:
             
         self.detector = DetectorProcessor()
         self.reconstructor = WavefrontReconstructor(
-            self.sim.pupil_grid, self.sim.pupil_mask, self.sim.subaps_pos, self.sim.subap_masks
+            self.sim.pupil_grid, self.sim.pupil_mask, self.sim.subaps_pos, self.sim.subap_masks, target_mode=target_mode
         )
         self.dm_controller = ActuatorController(
             self.reconstructor.G_full, self.reconstructor.pupil_grid, self.reconstructor.zernike_basis
@@ -70,26 +70,43 @@ class AOLoopState:
 
 loop_state = AOLoopState()
 
-def to_colormap_base64(arr, cmap_name='inferno'):
+def to_colormap_base64(arr, cmap_name='inferno', mask_2d=None):
     """Maps a 2D numpy array to color map values and converts to base64 encoded PNG."""
-    arr_min, arr_max = arr.min(), arr.max()
-    if arr_max - arr_min > 1e-8:
-        norm = (arr - arr_min) / (arr_max - arr_min)
+    if mask_2d is not None:
+        mask_idx = (mask_2d > 0)
+        arr_masked = arr[mask_idx]
+        if len(arr_masked) > 0:
+            arr_min, arr_max = arr_masked.min(), arr_masked.max()
+        else:
+            arr_min, arr_max = 0.0, 1.0
+            
+        if arr_max - arr_min > 1e-8:
+            norm = (arr - arr_min) / (arr_max - arr_min)
+        else:
+            norm = np.zeros_like(arr)
+        norm = np.clip(norm, 0.0, 1.0)
     else:
-        norm = np.zeros_like(arr)
+        arr_min, arr_max = arr.min(), arr.max()
+        if arr_max - arr_min > 1e-8:
+            norm = (arr - arr_min) / (arr_max - arr_min)
+        else:
+            norm = np.zeros_like(arr)
         
     h, w = arr.shape
     rgb = np.zeros((h, w, 3), dtype=np.uint8)
     
     if cmap_name == 'inferno':
+        # Apply a gamma stretch to boost visibility of the low-intensity details (halo, Airy rings)
+        norm_clipped = np.clip(norm, 0.0, 1.0)
+        norm_stretch = norm_clipped ** 0.5
         # Custom approximation of the inferno colormap
-        rgb[:, :, 0] = (norm ** 1.5 * 255).astype(np.uint8)
-        rgb[:, :, 1] = (norm ** 2.5 * 255).astype(np.uint8)
-        rgb[:, :, 2] = (norm ** 4.0 * 255).astype(np.uint8)
+        rgb[:, :, 0] = (norm_stretch * 255).astype(np.uint8)
+        rgb[:, :, 1] = (norm_stretch ** 2.5 * 255).astype(np.uint8)
+        rgb[:, :, 2] = (norm_stretch ** 6.0 * 255).astype(np.uint8)
     elif cmap_name == 'coolwarm':
-        # Blue to red mapping
+        # High contrast white-balanced coolwarm colormap
         rgb[:, :, 0] = (norm * 255).astype(np.uint8)
-        rgb[:, :, 1] = (np.sin(norm * np.pi) * 100).astype(np.uint8)
+        rgb[:, :, 1] = (np.sin(norm * np.pi) * 120 + (1.0 - np.abs(norm - 0.5)*2.0)*80).astype(np.uint8)
         rgb[:, :, 2] = ((1 - norm) * 255).astype(np.uint8)
     else:
         # Grayscale
@@ -97,6 +114,10 @@ def to_colormap_base64(arr, cmap_name='inferno'):
         rgb[:, :, 0] = val
         rgb[:, :, 1] = val
         rgb[:, :, 2] = val
+        
+    # Mask out-of-pupil background pixels to card dark blue
+    if mask_2d is not None:
+        rgb[~mask_idx] = [10, 15, 26]
         
     img = Image.fromarray(rgb, 'RGB')
     
@@ -190,13 +211,18 @@ def run_step():
             loop_state.strehl_history.pop(0)
             
         # Convert arrays to colored base64 images
-        atm_img = to_colormap_base64(atm_2d, 'coolwarm')
-        res_img = to_colormap_base64(res_2d, 'coolwarm')
+        atm_img = to_colormap_base64(atm_2d, 'coolwarm', pupil_2d)
+        res_img = to_colormap_base64(res_2d, 'coolwarm', pupil_2d)
         wfs_img = to_colormap_base64(raw_frame, 'inferno')
         
         # Actuator deformations map
         dm_grid = loop_state.applied_commands.reshape(18, 18)
-        dm_img = to_colormap_base64(dm_grid, 'gray')
+        dm_mask = np.zeros((18, 18), dtype=bool)
+        for r in range(18):
+            for c in range(18):
+                if (r - 8.5)**2 + (c - 8.5)**2 <= 9.0**2:
+                    dm_mask[r, c] = True
+        dm_img = to_colormap_base64(dm_grid, 'gray', dm_mask)
         
         regime = "Steady"
         if loop_state.mode == 'vajra':

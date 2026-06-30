@@ -174,3 +174,61 @@ class PSFReconstructor:
         psf /= psf.sum()
         
         return psf
+
+
+class SpeckleNullingController:
+    """Problem 26: Active Speckle Nulling Controller (ExAO Contrast Improvement).
+    Generates phase probe shapes on the Deformable Mirror to measure and null science focal plane speckles.
+    """
+    def __init__(self, num_actuators=config.DM_ACTUATORS_TOTAL):
+        self.num_actuators = num_actuators
+        self.probe_amplitude = 1e-8 # 10 nanometers probe amplitude
+        self.nulling_gain = 0.3
+        self.nulling_commands = np.zeros(num_actuators)
+        
+    def generate_probe(self, probe_index):
+        """Generates a spatial sine-wave probe pattern on the actuator grid.
+        probe_index: 0, 1, 2, or 3 corresponding to phases 0, pi/2, pi, 3pi/2.
+        """
+        probe = np.zeros(self.num_actuators)
+        side = config.DM_ACTUATORS_SIDE
+        phase_offset = probe_index * (np.pi / 2.0)
+        
+        # Spatial frequency for the target dark hole region
+        kx, ky = 1.5, 1.5 
+        
+        for i in range(self.num_actuators):
+            row = i // side
+            col = i % side
+            probe[i] = self.probe_amplitude * np.sin(kx * col + ky * row + phase_offset)
+            
+        return probe
+
+    def compute_nulling_commands(self, intensity_measurements):
+        """Computes the actuator cancellation commands from 4 probe intensity measurements.
+        intensity_measurements: list of 4 float arrays, each representing the science camera cropped region.
+        """
+        # Pairwise temporal phase shifting equations to reconstruct electric field
+        i0, i1, i2, i3 = intensity_measurements
+        
+        field_real = (i0 - i2) / (4.0 * self.probe_amplitude + 1e-12)
+        field_imag = (i3 - i1) / (4.0 * self.probe_amplitude + 1e-12)
+        
+        avg_real = np.mean(field_real)
+        avg_imag = np.mean(field_imag)
+        
+        correction = np.zeros(self.num_actuators)
+        side = config.DM_ACTUATORS_SIDE
+        for i in range(self.num_actuators):
+            row = i // side
+            col = i % side
+            correction[i] = -self.nulling_gain * (avg_real * np.sin(row) + avg_imag * np.cos(col))
+            
+        # Scale correction to a stable sub-nanometer step size (Problem 26 stabilization)
+        max_corr = np.max(np.abs(correction))
+        if max_corr > 0:
+            correction = (correction / max_corr) * (0.005 * config.ACTUATOR_STROKE_LIMIT)
+            
+        self.nulling_commands += correction
+        self.nulling_commands = np.clip(self.nulling_commands, -0.1 * config.ACTUATOR_STROKE_LIMIT, 0.1 * config.ACTUATOR_STROKE_LIMIT)
+        return self.nulling_commands

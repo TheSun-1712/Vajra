@@ -85,14 +85,22 @@ class AOPipelineSimulator:
         self.pupil_grid = hcipy.make_pupil_grid(256, config.D_APERTURE)
         self.pupil_mask = hcipy.make_circular_aperture(config.D_APERTURE)(self.pupil_grid)
         
-        # 2. Setup DM (aligned to Boston Micromachines Standard 276-3.5)
-        # Create influence functions (Gaussian)
+        # 2. Setup DMs (Dual-DM Architecture for Phase-Amplitude Correction)
+        # Pupil plane DM
         self.influence_functions = hcipy.make_gaussian_influence_functions(
             self.pupil_grid, 
             config.DM_ACTUATORS_SIDE, 
             config.D_APERTURE / (config.DM_ACTUATORS_SIDE - 1)
         )
         self.dm = hcipy.DeformableMirror(self.influence_functions)
+        
+        # Altitude plane DM
+        self.influence_functions_altitude = hcipy.make_gaussian_influence_functions(
+            self.pupil_grid,
+            config.DM_ACTUATORS_SIDE,
+            config.D_APERTURE / (config.DM_ACTUATORS_SIDE - 1)
+        )
+        self.dm_altitude = hcipy.DeformableMirror(self.influence_functions_altitude)
         
         # 3. Setup Microlens Array (MLA) geometry
         self.mla_grid_size = config.MLA_GRID_SIZE
@@ -151,13 +159,15 @@ class AOPipelineSimulator:
         return phase * self.pupil_mask
 
     def generate_hartmannogram(self, dm_commands=None, flux_nominal=config.PHOTON_FLUX_NOMINAL, 
-                              background_pedestal=config.SKY_BACKGROUND_PEDESTAL, registration_offset=(0.0,0.0)):
+                              background_pedestal=config.SKY_BACKGROUND_PEDESTAL, registration_offset=(0.0,0.0),
+                              dm_commands_altitude=None):
         """Generates a raw detector Hartmannogram image convolved with solar granulation or stellar point sources.
         
-        dm_commands: Actuator commands to apply to the DM.
+        dm_commands: Actuator commands to apply to the pupil DM.
         flux_nominal: Target photons per subaperture.
         background_pedestal: Uniform background pedestal value.
         registration_offset: Global thermal/mechanical MLA alignment drift (pixels).
+        dm_commands_altitude: Actuator commands to apply to the altitude DM.
         """
         # Apply DM shape if commanded
         if dm_commands is not None:
@@ -165,9 +175,14 @@ class AOPipelineSimulator:
         else:
             self.dm.actuators = np.zeros(config.DM_ACTUATORS_TOTAL)
             
-        # Get atmospheric phase and DM correction phase
+        if dm_commands_altitude is not None:
+            self.dm_altitude.actuators = dm_commands_altitude
+        else:
+            self.dm_altitude.actuators = np.zeros(config.DM_ACTUATORS_TOTAL)
+            
+        # Get atmospheric phase and DM correction phases
         atmosphere_phase = self.get_phase_screen()
-        dm_phase = self.dm.phase_for(config.LAMBDA_SENSING)
+        dm_phase = (self.dm.phase_for(config.LAMBDA_SENSING) + self.dm_altitude.phase_for(config.LAMBDA_SENSING))
         residual_phase = (atmosphere_phase + dm_phase) * self.pupil_mask
         
         # Initialize detector frame (16x16 subapertures * 16x16 pixels/subap = 256x256 pixels)
@@ -231,7 +246,7 @@ class AOPipelineSimulator:
             
             # PSF under aberrations: local shift + elongation/smearing under high phase variance
             phase_var = np.var(local_phase) if len(local_phase) > 0 else 0.0
-            psf_width = 1.2 + 0.4 * phase_var
+            psf_width = (1.6 if self.mode == "point" else 1.2) + 0.4 * phase_var
             
             r2 = (x_g - pixel_shift_x)**2 + (y_g - pixel_shift_y)**2
             psf = np.exp(-r2 / (2 * psf_width**2))
@@ -263,6 +278,14 @@ class AOPipelineSimulator:
             scintillation_factor = 1.0
             if np.random.rand() < 0.02: # 2% chance of transient drop
                 scintillation_factor = 0.2 + 0.3 * np.random.rand()
+            
+            # Scintillation compensation via the second (altitude) DM (Problem 27)
+            local_dm_alt = self.dm_altitude.phase_for(config.LAMBDA_SENSING)[mask_bool]
+            if len(local_dm_alt) > 0 and scintillation_factor < 1.0:
+                # Modulating local amplitude via DM phase stroke
+                scint_correction = np.mean(np.abs(local_dm_alt)) * 0.5
+                scintillation_factor = np.clip(scintillation_factor + scint_correction, 0.0, 1.0)
+                
             subap_flux *= scintillation_factor
             
             subimage = subimage / subimage.sum() * subap_flux

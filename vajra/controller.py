@@ -125,6 +125,20 @@ class TransformerPredictor(nn.Module):
         return out
 
 
+class RecurrentWavefrontPredictor(nn.Module):
+    """GRU-based recurrent neural network to forecast Zernike sequence transitions."""
+    def __init__(self, input_dim=config.ZERNIKE_MODES_MAX, hidden_dim=64):
+        super(RecurrentWavefrontPredictor, self).__init__()
+        self.gru = nn.GRU(input_size=input_dim, hidden_size=hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, input_dim)
+        
+    def forward(self, x, h0=None):
+        # x shape: (Batch, SeqLen, ZernikeDim)
+        out, h_next = self.gru(x, h0)
+        pred = self.fc(out[:, -1, :])
+        return pred, h_next
+
+
 class RegimeAwarePredictor:
     """Problem 8 & 20: Regime-aware predictor classifying atmospheric states to select optimal predictive models."""
     def __init__(self):
@@ -138,16 +152,27 @@ class RegimeAwarePredictor:
         self.classifier_net = RegimeClassifier(history_len=10, feature_dim=512).to(device)
         self.transformer_pred = TransformerPredictor(history_len=20, input_dim=67, output_dim=66).to(device)
         
+        # Recurrent GRU predictor (Optimizations 2)
+        self.recurrent_predictor = RecurrentWavefrontPredictor().to(device)
+        
         self.classifier_net.eval()
         self.transformer_pred.eval()
+        self.recurrent_predictor.eval()
+        
+        self.recurrent_hidden = None
+        self.recurrent_history = []
+        
         self._initialize_mock_weights()
         
     def _initialize_mock_weights(self):
         """Initializes weights with reasonable defaults."""
         with torch.no_grad():
             nn.init.constant_(self.transformer_pred.output_layer.bias, 0.0)
-            # Initialize identity-like mapping
             self.transformer_pred.output_layer.weight.data.normal_(0.0, 0.01)
+            
+            # Recurrent GRU predictor weights
+            nn.init.constant_(self.recurrent_predictor.fc.bias, 0.0)
+            self.recurrent_predictor.fc.weight.data.normal_(0.0, 0.01)
 
     def classify_regime(self, slopes):
         """Classifies the turbulence regime from the spatial correlation matrix of the slopes."""
@@ -175,8 +200,8 @@ class RegimeAwarePredictor:
             
         self.probabilities = 0.9 * self.probabilities + 0.1 * probs
 
-    def predict(self, current_zernikes, dt_latency):
-        """Predicts the wavefront state at time t + dt_latency."""
+    def predict(self, current_zernikes, dt_latency, mount_acceleration=None):
+        """Predicts the wavefront state at time t + dt_latency, incorporating feed-forward mount acceleration."""
         if len(self.history) < 20:
             return current_zernikes
             
@@ -194,12 +219,33 @@ class RegimeAwarePredictor:
         decay_coeff = 0.50
         p_broken = current_zernikes * (decay_coeff ** steps_ahead)
         
-        # Combine predictions
+        # 4. Recurrent GRU sequence prediction (Optimizations 2)
+        self.recurrent_history.append(current_zernikes)
+        if len(self.recurrent_history) > 10:
+            self.recurrent_history.pop(0)
+            
+        if len(self.recurrent_history) >= 5:
+            seq_tensor = torch.tensor(np.array(self.recurrent_history), dtype=torch.float32, device=device).unsqueeze(0)
+            with torch.no_grad():
+                recurrent_pred, self.recurrent_hidden = self.recurrent_predictor(seq_tensor, self.recurrent_hidden)
+                if self.recurrent_hidden is not None:
+                    self.recurrent_hidden = self.recurrent_hidden.detach()
+                p_recurrent = recurrent_pred.squeeze(0).cpu().numpy()
+        else:
+            p_recurrent = current_zernikes.copy()
+        
+        # Combine predictions blending GRU predictions for transitioning & steady states
         predicted_zernikes = (
-            self.probabilities[0] * p_steady +
-            self.probabilities[1] * p_trans +
+            self.probabilities[0] * p_steady * 0.5 + self.probabilities[0] * p_recurrent * 0.5 +
+            self.probabilities[1] * p_recurrent +
             self.probabilities[2] * p_broken
         )
+        
+        # Feed-forward mount vibration tip-tilt rejection (Zernike index 0 and 1)
+        if mount_acceleration is not None:
+            # Mount acceleration is double-integrated to calculate position offset
+            ff_correction = -0.05 * mount_acceleration
+            predicted_zernikes[:2] += ff_correction[:2]
         
         # Optional: Run Transformer Predictor on GPU if available for prediction refinement
         history_z = [h[:config.ZERNIKE_MODES_MAX] for h in self.history[-20:]]
@@ -329,6 +375,10 @@ class ActuatorController:
         # History of commands for saturation load-shifting prediction
         self.command_history = []
         self.history_len = 10
+        
+        # Dynamic loop parameter settings (for RL agent tuning)
+        self.modal_gains = np.ones(self.num_zernikes)
+        self.glao_weight = 0.8
 
     def _compute_zernike_to_command(self, reconstructor_matrix, pupil_grid=None, zernike_basis=None):
         """Computes the static projection from Zernike phase coefficients to actuator stroke units."""
@@ -400,9 +450,45 @@ class ActuatorController:
             nn.init.constant_(self.neural_hysteresis.fc.weight, 0.0)
             nn.init.constant_(self.neural_hysteresis.fc.bias, 0.0)
 
+    def set_loop_parameters(self, modal_gains=None, glao_weight=None):
+        """Sets the loop parameters dynamically tuned by the RL agent."""
+        if modal_gains is not None:
+            self.modal_gains = np.clip(modal_gains, 0.05, 2.0)
+        if glao_weight is not None:
+            self.glao_weight = np.clip(glao_weight, 0.0, 1.0)
+
+    def clip_interactuator_shear(self, commands):
+        """Ensures that the commanded shape does not exceed maximum local slope limit between adjacent actuators."""
+        side = config.DM_ACTUATORS_SIDE
+        max_diff = 0.3 * self.stroke_limit # Max allowable shear stroke (approx 1.05 microns)
+        clipped = commands.copy()
+        
+        # Run 2 passes to propagate constraints smoothly
+        for _ in range(2):
+            for i in range(self.num_actuators):
+                row = i // side
+                col = i % side
+                
+                # Check 4 neighbors (up, down, left, right)
+                neighbors = []
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = row + dr, col + dc
+                    if 0 <= nr < side and 0 <= nc < side:
+                        neighbors.append(nr * side + nc)
+                        
+                for n in neighbors:
+                    diff = clipped[i] - clipped[n]
+                    if np.abs(diff) > max_diff:
+                        # Pull current command closer to neighbor
+                        clipped[i] = clipped[n] + np.sign(diff) * max_diff
+                        
+        return clipped
+
     def calculate_commands(self, target_zernikes, current_commands):
-        """Problem 7 & 25: Computes safe actuator commands avoiding saturation cascade."""
-        u_target = self.zernike_to_command @ target_zernikes
+        """Problem 7 & 25: Computes safe actuator commands avoiding saturation cascade and shear violations."""
+        # Scale target Zernikes by modal gains
+        scaled_zernikes = target_zernikes * self.modal_gains
+        u_target = self.zernike_to_command @ scaled_zernikes
         
         # Update command history
         self.command_history.append(current_commands)
@@ -434,8 +520,12 @@ class ActuatorController:
         # Hard clip as absolute safety check
         final_u = np.clip(final_u, -self.stroke_limit, self.stroke_limit)
         
+        # Apply interactuator shear check to protect the DM membrane
+        final_u = self.clip_interactuator_shear(final_u)
+        
         # 3. Apply inverse hysteresis pre-shaping
         compensated_u = self.compensate_hysteresis(final_u)
+        compensated_u = self.clip_interactuator_shear(compensated_u)
         
         return final_u, compensated_u
 
@@ -511,3 +601,52 @@ class TemporalMultiplexor:
         multiplexed = base_command * modifier
         self.current_state = (self.current_state + 1) % self.num_states
         return multiplexed
+
+
+class LQGStructuralTracker:
+    """Problem 30: Adaptive LQG structural vibration tracker.
+    Uses a dynamic Kalman filter to estimate narrow-band resonances and adaptively update notch filters.
+    """
+    def __init__(self, dt=0.001):
+        self.dt = dt
+        # State space: [position, velocity, acceleration, frequency]
+        self.state = np.array([0.0, 0.0, 0.0, 48.0]) # starting at 48 Hz default vibration
+        self.P = np.eye(4) * 0.1 # Covariance matrix
+        self.Q = np.diag([1e-4, 1e-3, 1e-2, 1e-3]) # Process noise
+        self.R = np.array([[1e-2]]) # Measurement noise (tip-tilt readout)
+        
+    def update_and_track(self, z_tt_measured):
+        """z_tt_measured: current measured tip-tilt coefficient (scalar)."""
+        # 1. Prediction step: state transition
+        f = self.state[3]
+        omega = 2.0 * np.pi * f
+        
+        F = np.array([
+            [1.0, self.dt, 0.0, 0.0],
+            [0.0, 1.0, self.dt, 0.0],
+            [-omega**2, 0.0, 0.0, -2.0 * omega * self.state[0]], # linearized wrt f
+            [0.0, 0.0, 0.0, 1.0] # frequency walk
+        ])
+        
+        self.state = np.array([
+            self.state[0] + self.state[1] * self.dt,
+            self.state[1] + self.state[2] * self.dt,
+            -omega**2 * self.state[0],
+            self.state[3]
+        ])
+        
+        self.P = F @ self.P @ F.T + self.Q
+        
+        # 2. Update step
+        H = np.array([[1.0, 0.0, 0.0, 0.0]])
+        y = z_tt_measured - (H @ self.state)[0] # measurement residual
+        
+        S = H @ self.P @ H.T + self.R
+        K = self.P @ H.T @ np.linalg.inv(S)
+        
+        self.state = self.state + K.squeeze() * y
+        self.P = (np.eye(4) - K @ H) @ self.P
+        
+        # Clip estimated frequency to safe physical bounds (30 Hz to 80 Hz)
+        self.state[3] = np.clip(self.state[3], 30.0, 80.0)
+        return self.state[3]

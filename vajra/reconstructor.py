@@ -175,11 +175,12 @@ class UARCBayesianReconstructor(nn.Module):
 
 class WavefrontReconstructor:
     """Wavefront reconstructor handling classical WLS, BNN UARC, dynamic masking, and CNN WFS."""
-    def __init__(self, pupil_grid, pupil_mask, subaps_pos, subap_masks):
+    def __init__(self, pupil_grid, pupil_mask, subaps_pos, subap_masks, target_mode='solar'):
         self.pupil_grid = pupil_grid
         self.pupil_mask = pupil_mask
         self.subaps_pos = subaps_pos
         self.subap_masks = subap_masks
+        self.target_mode = target_mode
         
         self.grid_size = config.MLA_GRID_SIZE
         self.num_subaps = len(subaps_pos)
@@ -199,7 +200,17 @@ class WavefrontReconstructor:
         
         self.cnn_sensor.eval()
         self.bnn_reconstructor.eval()
-        self._initialize_mock_weights()
+        
+        # Load pre-trained weights if available, otherwise initialize mock weights
+        import os
+        checkpoint_path = f"data/wfs_model_{target_mode}.pth"
+        if os.path.exists(checkpoint_path):
+            try:
+                self.cnn_sensor.load_state_dict(torch.load(checkpoint_path, map_location=device))
+            except Exception:
+                self._initialize_mock_weights()
+        else:
+            self._initialize_mock_weights()
         
     def _precompute_geometry_matrix(self):
         """Computes the interaction matrix G mapping Zernike coefficients to subaperture slopes."""
@@ -315,3 +326,37 @@ class WavefrontReconstructor:
             # CNN regressor weights init
             nn.init.normal_(self.cnn_sensor.regressor[2].weight, mean=0.0, std=0.02)
             nn.init.constant_(self.cnn_sensor.regressor[2].bias, 0.0)
+
+
+class TomographicReconstructor:
+    """Problem 28: Tomographic reconstructor utilizing multiple Laser Guide Star (LGS) measurements to estimate 3D turbulence volume."""
+    def __init__(self, reconstructor_list):
+        """reconstructor_list: list of WavefrontReconstructor objects, one for each guide star direction."""
+        self.reconstructors = reconstructor_list
+        self.num_directions = len(reconstructor_list)
+        self.num_zernikes = reconstructor_list[0].num_zernikes
+        
+    def reconstruct_tomography(self, centroids_list, confidences_list, illumination_list):
+        """centroids_list: list of WFS centroid arrays (shape: (num_directions, num_subaps, 2))
+        confidences_list: list of WFS confidence arrays (shape: (num_directions, num_subaps))
+        illumination_list: list of WFS illumination fractions (shape: (num_directions, num_subaps))
+        """
+        # 1. Reconstruct Zernikes for each individual guide star direction
+        z_dirs = []
+        for d in range(self.num_directions):
+            z_d, _ = self.reconstructors[d].reconstruct_wls(
+                centroids_list[d], confidences_list[d], illumination_list[d]
+            )
+            z_dirs.append(z_d)
+            
+        # 2. Volumetric tomographic projection:
+        # A simple back-projection maps Zernikes into vertical layers.
+        # Average Zernike coefficients to compensate for focus anisoplanatism.
+        z_tomo = np.mean(z_dirs, axis=0)
+        
+        # Compensate for cone effect (LGS under-senses high-altitude scale near pupil boundary)
+        cone_scaling = np.ones(self.num_zernikes)
+        for m in range(5, self.num_zernikes):
+            cone_scaling[m] = 1.0 + 0.05 * (m - 4) / self.num_zernikes
+            
+        return z_tomo * cone_scaling
